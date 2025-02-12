@@ -357,8 +357,6 @@ static struct rte_mbuf *ng_send_icmp(struct rte_mempool *mbuf_pool, uint8_t *dst
 	return mbuf;
 }
 
-
-
 // nsocket nbind  nrecvfrom nsendto nclose 是udp socket相关的接口
 // 创建并返回一个socket fd
 static int nsocket(__attribute__((unused)) int domain, int type, __attribute__((unused))  int protocol) {
@@ -666,7 +664,6 @@ static int nclose(int fd) {
 	}
 	return 0;
 }
-
 
 static int ng_udp_process(struct rte_mbuf *udpmbuf) {
 	struct rte_ipv4_hdr *iphdr = rte_pktmbuf_mtod_offset(udpmbuf, struct rte_ipv4_hdr *, sizeof(struct rte_ether_hdr));
@@ -1226,7 +1223,6 @@ static int tcp_server_entry(__attribute__((unused))  void *arg) {
 	nclose(listenfd);
 }
 
-
 static int pkt_process(void *arg) {
 	struct rte_mempool *mbuf_pool = (struct rte_mempool *)arg;
 	struct inout_ring *ring = ringInstance();
@@ -1305,7 +1301,6 @@ static int pkt_process(void *arg) {
 	return 0;
 }
 
-
 int main(int argc, char *argv[]) {
 	if (rte_eal_init(argc, argv) < 0) {
 		rte_exit(EXIT_FAILURE, "Error with EAL init\n");
@@ -1318,7 +1313,9 @@ int main(int argc, char *argv[]) {
 	}
 
 	ng_init_port(mbuf_pool);
+
 	rte_eth_macaddr_get(gDpdkPortId, (struct rte_ether_addr *)gSrcMac);
+	
 	rte_timer_subsystem_init();
 	struct rte_timer arp_timer;
 	rte_timer_init(&arp_timer);
@@ -1377,7 +1374,6 @@ int main(int argc, char *argv[]) {
 			rte_timer_manage();
 			prev_tsc = cur_tsc;
 		}
-
 	}
 }
 
