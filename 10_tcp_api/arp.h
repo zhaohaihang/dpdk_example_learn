@@ -33,7 +33,7 @@ struct arp_entry {
 	uint32_t ip;
 	uint8_t hwaddr[RTE_ETHER_ADDR_LEN];
 
-	uint8_t type;
+	uint8_t type;  // 静态or动态
 	// 
 
 	struct arp_entry *next;
