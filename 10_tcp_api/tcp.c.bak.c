@@ -158,11 +158,6 @@ struct ng_tcp_stream { // tcb control block
 
 };
 
-struct ng_tcp_table {
-	int count;
-	//struct ng_tcp_stream *listener_set;	//
-	struct ng_tcp_stream *tcb_set;
-};
 
 struct ng_tcp_fragment {
 
