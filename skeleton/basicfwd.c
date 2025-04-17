@@ -23,7 +23,6 @@ static const struct rte_eth_conf port_conf_default = {
 	},
 };
 
-
 /* basicfwd.c: Basic DPDK skeleton forwarding example. */
 
 /*
@@ -41,7 +40,6 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 	uint16_t q;
 	struct rte_eth_dev_info dev_info;
 	struct rte_eth_txconf txconf;
-	struct rte_eth_rxconf rxconf;
 
 	if (!rte_eth_dev_is_valid_port(port))
 		return -1;
@@ -61,12 +59,9 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 		return retval;
 
 	/* Allocate and set up 1 RX queue per Ethernet port. */
-
-	rxconf = dev_info.default_rxconf;
-	rxconf.offloads = port_conf.rxmode.offloads;
 	for (q = 0; q < rx_rings; q++) {
 		retval = rte_eth_rx_queue_setup(port, q, nb_rxd,
-				rte_eth_dev_socket_id(port), &rxconf, mbuf_pool);
+				rte_eth_dev_socket_id(port), NULL, mbuf_pool);
 		if (retval < 0)
 			return retval;
 	}
@@ -116,9 +111,9 @@ lcore_main(void)
 	 * for best performance.
 	 */
 	RTE_ETH_FOREACH_DEV(port)
-		
-
-		if (rte_eth_dev_socket_id(port) > 0 &&rte_eth_dev_socket_id(port) !=(int)rte_socket_id())
+		if (rte_eth_dev_socket_id(port) > 0 &&
+				rte_eth_dev_socket_id(port) !=
+						(int)rte_socket_id())
 			printf("WARNING, port %u is on remote NUMA node to "
 					"polling thread.\n\tPerformance will "
 					"not be optimal.\n", port);
@@ -128,7 +123,6 @@ lcore_main(void)
 
 	/* Run until the application is quit or killed. */
 	for (;;) {
-		// printf("port");
 		/*
 		 * Receive packets on a port and forward them on the paired
 		 * port. The mapping is 0 -> 1, 1 -> 0, 2 -> 3, 3 -> 2, etc.
@@ -142,22 +136,17 @@ lcore_main(void)
 
 			if (unlikely(nb_rx == 0))
 				continue;
-			
-			printf("port %u received %u packets\n", port, nb_rx);
-			uint16_t buf;
-			for (buf = nb_rx; buf < nb_rx; buf++)
-					rte_pktmbuf_free(bufs[buf]);
-			/* Send burst of TX packets, to second port of pair. */
-			// const uint16_t nb_tx = rte_eth_tx_burst(port ^ 1, 0,
-			// 		bufs, nb_rx);
 
+			/* Send burst of TX packets, to second port of pair. */
+			const uint16_t nb_tx = rte_eth_tx_burst(port ^ 1, 0,
+					bufs, nb_rx);
 
 			/* Free any unsent packets. */
-			// if (unlikely(nb_tx < nb_rx)) {
-				
-			// 	for (buf = nb_tx; buf < nb_rx; buf++)
-			// 		rte_pktmbuf_free(bufs[buf]);
-			// }
+			if (unlikely(nb_tx < nb_rx)) {
+				uint16_t buf;
+				for (buf = nb_tx; buf < nb_rx; buf++)
+					rte_pktmbuf_free(bufs[buf]);
+			}
 		}
 	}
 }
