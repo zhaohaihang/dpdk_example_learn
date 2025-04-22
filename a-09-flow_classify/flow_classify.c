@@ -174,13 +174,16 @@ struct rte_flow_query_count count = {
 	.hits = 0,
 	.bytes = 0,
 };
+// 启用流量计数器
 static struct rte_flow_action count_action = { RTE_FLOW_ACTION_TYPE_COUNT,
 	&count};
 static struct rte_flow_action end_action = { RTE_FLOW_ACTION_TYPE_END, 0};
+// rte_flow_action 结构体数组(terminated by the END pattern item)，表示流规则的动作，比如QUEUE, DROP, END等等
+// 这里的action有两个动作，分别是计数和结束
 static struct rte_flow_action actions[2];
 
 /* sample attributes */
-static struct rte_flow_attr attr;
+static struct rte_flow_attr attr;// 代表的一条流规则属性
 
 /* flow_classify.c: * Based on DPDK skeleton forwarding example. */
 
@@ -321,17 +324,21 @@ lcore_main(struct flow_classifier *cls_app)
 				}
 			}
 
-			/* Send burst of TX packets, to second port of pair. */
-			const uint16_t nb_tx = rte_eth_tx_burst(port ^ 1, 0,
-					bufs, nb_rx);
+			// /* Send burst of TX packets, to second port of pair. */
+			// const uint16_t nb_tx = rte_eth_tx_burst(port ^ 1, 0,
+			// 		bufs, nb_rx);
 
-			/* Free any unsent packets. */
-			if (unlikely(nb_tx < nb_rx)) {
-				uint16_t buf;
+			// /* Free any unsent packets. */
+			// if (unlikely(nb_tx < nb_rx)) {
+			// 	uint16_t buf;
 
-				for (buf = nb_tx; buf < nb_rx; buf++)
-					rte_pktmbuf_free(bufs[buf]);
-			}
+			// 	for (buf = nb_tx; buf < nb_rx; buf++)
+			// 		rte_pktmbuf_free(bufs[buf]);
+			// }
+			uint16_t buf;
+			for (buf = 0; buf < nb_rx; buf++)
+				rte_pktmbuf_free(bufs[buf]);
+			
 		}
 	}
 }
@@ -494,6 +501,9 @@ add_classify_rule(struct rte_eth_ntuple_filter *ntuple_filter,
 {
 	int ret = -1;
 	int key_found;
+	/* rte_flow_item： ACL 规则的详细内容。
+    会从最低协议层开始堆叠flow_item来形成一个匹配模式。必须由 end_item 结尾。
+    */
 	struct rte_flow_error error;
 	struct rte_flow_item_ipv4 ipv4_spec;
 	struct rte_flow_item_ipv4 ipv4_mask;
@@ -521,6 +531,7 @@ add_classify_rule(struct rte_eth_ntuple_filter *ntuple_filter,
 	}
 
 	/* set up parameters for validate and add */
+	// 填充ip头部协议字段(上层协议)
 	memset(&ipv4_spec, 0, sizeof(ipv4_spec));
 	ipv4_spec.hdr.next_proto_id = ntuple_filter->proto;
 	ipv4_spec.hdr.src_addr = ntuple_filter->src_ip;
@@ -531,35 +542,39 @@ add_classify_rule(struct rte_eth_ntuple_filter *ntuple_filter,
 	ipv4_mask.hdr.next_proto_id = ntuple_filter->proto_mask;
 	ipv4_mask.hdr.src_addr = ntuple_filter->src_ip_mask;
 	ipv4_mask.hdr.src_addr =
-		convert_depth_to_bitmask(ipv4_mask.hdr.src_addr);
+		convert_depth_to_bitmask(ipv4_mask.hdr.src_addr); //转化为掩码
 	ipv4_mask.hdr.dst_addr = ntuple_filter->dst_ip_mask;
 	ipv4_mask.hdr.dst_addr =
 		convert_depth_to_bitmask(ipv4_mask.hdr.dst_addr);
 
 	switch (ipv4_proto) {
-	case IPPROTO_UDP:
+	case IPPROTO_UDP:	// 如果是UDP
+		// 匹配IPV4
 		ipv4_udp_item.type = RTE_FLOW_ITEM_TYPE_IPV4;
 		ipv4_udp_item.spec = &ipv4_spec;
 		ipv4_udp_item.mask = &ipv4_mask;
 		ipv4_udp_item.last = NULL;
 
+		// 填充UDP头部
 		udp_spec.hdr.src_port = ntuple_filter->src_port;
 		udp_spec.hdr.dst_port = ntuple_filter->dst_port;
 		udp_spec.hdr.dgram_len = 0;
 		udp_spec.hdr.dgram_cksum = 0;
 
+		// 填充udp的掩码
 		udp_mask.hdr.src_port = ntuple_filter->src_port_mask;
 		udp_mask.hdr.dst_port = ntuple_filter->dst_port_mask;
 		udp_mask.hdr.dgram_len = 0;
 		udp_mask.hdr.dgram_cksum = 0;
 
+		// 匹配UDP
 		udp_item.type = RTE_FLOW_ITEM_TYPE_UDP;
 		udp_item.spec = &udp_spec;
 		udp_item.mask = &udp_mask;
 		udp_item.last = NULL;
 
-		attr.priority = ntuple_filter->priority;
-		pattern_ipv4_5tuple[1] = ipv4_udp_item;
+		attr.priority = ntuple_filter->priority; // 设置组内规则优先级属性
+		pattern_ipv4_5tuple[1] = ipv4_udp_item; // 将每个规则添加到规则数组中
 		pattern_ipv4_5tuple[2] = udp_item;
 		break;
 	case IPPROTO_TCP:
@@ -614,13 +629,21 @@ add_classify_rule(struct rte_eth_ntuple_filter *ntuple_filter,
 		return ret;
 	}
 
-	attr.ingress = 1;
-	pattern_ipv4_5tuple[0] = eth_item;
-	pattern_ipv4_5tuple[3] = end_item;
-	actions[0] = count_action;
+	attr.ingress = 1; // 规则适用于入口流量
+	pattern_ipv4_5tuple[0] = eth_item; // 匹配二层数据报文
+	pattern_ipv4_5tuple[3] = end_item; // 结束匹配
+	actions[0] = count_action; // 指定action
 	actions[1] = end_action;
 
 	/* Validate and add rule */
+	/*
+		流分类验证
+		cls_app->cls: 流分类器实例
+		attr： 流规则属性
+		pattern_ipv4_5tuple: 模式指定（列表由END模式项终止）
+		actions： 关联动作（列表由END模式项终止）
+		error： 如果不为NULL，则执行详细的错误报告。仅在发生错误的情况下初始化结构
+	*/
 	ret = rte_flow_classify_validate(cls_app->cls, &attr,
 			pattern_ipv4_5tuple, actions, &error);
 	if (ret) {
@@ -629,6 +652,17 @@ add_classify_rule(struct rte_eth_ntuple_filter *ntuple_filter,
 		return ret;
 	}
 
+	/*
+		将流分类规则添加到flow_classifier表中
+		cls_app->cls: 流分类器实例
+		attr： 流规则属性
+		pattern_ipv4_5tuple: 模式指定（列表由END模式项终止）
+		actions： 关联动作（列表由END模式项终止）
+		key_found: 如果规则已经存在，则返回1，否则返回0
+		error： 如果不为NULL，则执行详细的错误报告。仅在发生错误的情况下初始化结构
+
+		成功时返回有效句柄rule
+	*/
 	rule = rte_flow_classify_table_entry_add(
 			cls_app->cls, &attr, pattern_ipv4_5tuple,
 			actions, &key_found, &error);
@@ -639,6 +673,7 @@ add_classify_rule(struct rte_eth_ntuple_filter *ntuple_filter,
 		return ret;
 	}
 
+	// 将句柄存放在rules数组中
 	rules[num_classify_rules] = rule;
 	num_classify_rules++;
 	return 0;
@@ -754,10 +789,10 @@ main(int argc, char *argv[])
 	uint16_t portid;
 	int ret;
 	int socket_id;
-	struct rte_table_acl_params table_acl_params;
-	struct rte_flow_classify_table_params cls_table_params;
-	struct flow_classifier *cls_app;
-	struct rte_flow_classifier_params cls_params;
+	struct rte_table_acl_params table_acl_params; // ACL(访问控制列表)参数
+	struct rte_flow_classify_table_params cls_table_params; // 创建ACL table表参数
+	struct flow_classifier *cls_app; 
+	struct rte_flow_classifier_params cls_params; // 流分类器创建参数
 	uint32_t size;
 
 	/* Initialize the Environment Abstraction Layer (EAL). */
@@ -805,31 +840,31 @@ main(int argc, char *argv[])
 	/* Memory allocation */
 	// 分配一块内存，用来存放flow_classifier结构体，用来存放ACL表和分类器
 	size = RTE_CACHE_LINE_ROUNDUP(sizeof(struct flow_classifier_acl));
-	cls_app = rte_zmalloc(NULL, size, RTE_CACHE_LINE_SIZE);
+	cls_app = rte_zmalloc(NULL, size, RTE_CACHE_LINE_SIZE);  // // 分配一个struct flow_classifier_acl大小的缓存
 	if (cls_app == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot allocate classifier memory\n");
 
-	cls_params.name = "flow_classifier";
+	cls_params.name = "flow_classifier"; // 流分类器参数初始化
 	cls_params.socket_id = socket_id;
 
-	cls_app->cls = rte_flow_classifier_create(&cls_params); // 创建分类器
+	cls_app->cls = rte_flow_classifier_create(&cls_params); // 根据流分类器参数创建流分类器
 	if (cls_app->cls == NULL) {
 		rte_free(cls_app);
 		rte_exit(EXIT_FAILURE, "Cannot create classifier\n");
 	}
 
 	/* initialise ACL table params */
-	table_acl_params.name = "table_acl_ipv4_5tuple";
-	table_acl_params.n_rules = FLOW_CLASSIFY_MAX_RULE_NUM;
-	table_acl_params.n_rule_fields = RTE_DIM(ipv4_defs);
+	table_acl_params.name = "table_acl_ipv4_5tuple";  //设置表的ACL的name字段
+	table_acl_params.n_rules = FLOW_CLASSIFY_MAX_RULE_NUM; // 表的ACL表中的最大规则数，这里的91条
+	table_acl_params.n_rule_fields = RTE_DIM(ipv4_defs); // 表的ACL表中的字段数
 	memcpy(table_acl_params.field_format, ipv4_defs, sizeof(ipv4_defs));
 
 	/* initialise table create params */
-	cls_table_params.ops = &rte_table_acl_ops;
+	cls_table_params.ops = &rte_table_acl_ops;  // 设置流分类表的参数
 	cls_table_params.arg_create = &table_acl_params;
 	cls_table_params.type = RTE_FLOW_CLASSIFY_TABLE_ACL_IP4_5TUPLE;
 
-	ret = rte_flow_classify_table_create(cls_app->cls, &cls_table_params); //创建ACL表
+	ret = rte_flow_classify_table_create(cls_app->cls, &cls_table_params); //创建流分类表
 	if (ret) {
 		rte_flow_classifier_free(cls_app->cls);
 		rte_free(cls_app);
