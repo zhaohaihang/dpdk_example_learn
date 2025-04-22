@@ -364,7 +364,7 @@ get_cb_field(char **in, uint32_t *fd, int base, unsigned long lim,
 }
 
 static int
-parse_ipv4_net(char *in, uint32_t *addr, uint32_t *mask_len)
+parse_ipv4_net(char *in, uint32_t *addr, uint32_t *mask_len)  // 解析 ip mask
 {
 	uint32_t a, b, c, d, m;
 
@@ -385,7 +385,7 @@ parse_ipv4_net(char *in, uint32_t *addr, uint32_t *mask_len)
 }
 
 static int
-parse_ipv4_5tuple_rule(char *str, struct rte_eth_ntuple_filter *ntuple_filter)
+parse_ipv4_5tuple_rule(char *str, struct rte_eth_ntuple_filter *ntuple_filter)  // 解析文本的规则
 {
 	int i, ret;
 	char *s, *sp, *in[CB_FLD_NUM];
@@ -668,7 +668,7 @@ add_rules(const char *rule_path, struct flow_classifier *cls_app)
 	while (fgets(buff, LINE_MAX, fh) != NULL) {
 		i++;
 
-		if (is_bypass_line(buff))
+		if (is_bypass_line(buff))  // 跳过空行，或者#开头的行
 			continue;
 
 		if (total_num >= FLOW_CLASSIFY_MAX_RULE_NUM - 1) {
@@ -677,12 +677,12 @@ add_rules(const char *rule_path, struct flow_classifier *cls_app)
 			break;
 		}
 
-		if (parse_ipv4_5tuple_rule(buff, &ntuple_filter) != 0)
+		if (parse_ipv4_5tuple_rule(buff, &ntuple_filter) != 0)  // 解析文本中的规则
 			rte_exit(EXIT_FAILURE,
 				"%s Line %u: parse rules error\n",
 				rule_path, i);
 
-		if (add_classify_rule(&ntuple_filter, cls_app) != 0)
+		if (add_classify_rule(&ntuple_filter, cls_app) != 0)  // 添加规则
 			rte_exit(EXIT_FAILURE, "add rule error\n");
 
 		total_num++;
@@ -829,7 +829,7 @@ main(int argc, char *argv[])
 	cls_table_params.arg_create = &table_acl_params;
 	cls_table_params.type = RTE_FLOW_CLASSIFY_TABLE_ACL_IP4_5TUPLE;
 
-	ret = rte_flow_classify_table_create(cls_app->cls, &cls_table_params);
+	ret = rte_flow_classify_table_create(cls_app->cls, &cls_table_params); //创建ACL表
 	if (ret) {
 		rte_flow_classifier_free(cls_app->cls);
 		rte_free(cls_app);
