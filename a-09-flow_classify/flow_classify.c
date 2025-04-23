@@ -310,9 +310,10 @@ lcore_main(struct flow_classifier *cls_app)
 						bufs, nb_rx, rules[i],
 						&classify_stats);
 					if (ret)
-						printf(
-							"rule [%d] query failed ret [%d]\n\n",
-							i, ret);
+					;
+						// printf(
+							// "rule [%d] query failed ret [%d]\n\n",
+							// i, ret);
 					else {
 						printf(
 						"rule[%d] count=%"PRIu64"\n",
@@ -327,7 +328,7 @@ lcore_main(struct flow_classifier *cls_app)
 			// /* Send burst of TX packets, to second port of pair. */
 			// const uint16_t nb_tx = rte_eth_tx_burst(port ^ 1, 0,
 			// 		bufs, nb_rx);
-
+			// printf("port %d,nb_rx = %d\n\n",port, nb_rx);
 			// /* Free any unsent packets. */
 			// if (unlikely(nb_tx < nb_rx)) {
 			// 	uint16_t buf;
