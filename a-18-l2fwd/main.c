@@ -72,7 +72,7 @@ static unsigned int l2fwd_rx_queue_per_lcore = 1;
 #define MAX_RX_QUEUE_PER_LCORE 16
 #define MAX_TX_QUEUE_PER_PORT 16
 struct lcore_queue_conf {
-	unsigned n_rx_port;
+	unsigned n_rx_port;     //unsigned 是 unsigned int 的简写，两者完全等价
 	unsigned rx_port_list[MAX_RX_QUEUE_PER_LCORE];
 } __rte_cache_aligned;
 struct lcore_queue_conf lcore_queue_conf[RTE_MAX_LCORE];
@@ -174,10 +174,10 @@ l2fwd_simple_forward(struct rte_mbuf *m, unsigned portid)
 	dst_port = l2fwd_dst_ports[portid];
 
 	if (mac_updating)
-		l2fwd_mac_updating(m, dst_port);
+		l2fwd_mac_updating(m, dst_port);  // 很具参数决定是否修改mac
 
 	buffer = tx_buffer[dst_port];
-	sent = rte_eth_tx_buffer(dst_port, 0, buffer, m);
+	sent = rte_eth_tx_buffer(dst_port, 0, buffer, m); // 缓存单个mbuf
 	if (sent)
 		port_statistics[dst_port].tx += sent;
 }
@@ -201,16 +201,16 @@ l2fwd_main_loop(void)
 	timer_tsc = 0;
 
 	lcore_id = rte_lcore_id();
-	qconf = &lcore_queue_conf[lcore_id];
+	qconf = &lcore_queue_conf[lcore_id];  // 获取当前核心的配置信息
 
-	if (qconf->n_rx_port == 0) {
+	if (qconf->n_rx_port == 0) {   
 		RTE_LOG(INFO, L2FWD, "lcore %u has nothing to do\n", lcore_id);
 		return;
 	}
 
 	RTE_LOG(INFO, L2FWD, "entering main loop on lcore %u\n", lcore_id);
 
-	for (i = 0; i < qconf->n_rx_port; i++) {
+	for (i = 0; i < qconf->n_rx_port; i++) { // 打印每一个lcore负责的端口id
 
 		portid = qconf->rx_port_list[i];
 		RTE_LOG(INFO, L2FWD, " -- lcoreid=%u portid=%u\n", lcore_id,
@@ -225,15 +225,16 @@ l2fwd_main_loop(void)
 		/*
 		 * TX burst queue drain
 		 */
-		diff_tsc = cur_tsc - prev_tsc;
-		if (unlikely(diff_tsc > drain_tsc)) {
+		// 发包
+		diff_tsc = cur_tsc - prev_tsc;  
+		if (unlikely(diff_tsc > drain_tsc)) {  // 判断是否到了发包时间
 
 			for (i = 0; i < qconf->n_rx_port; i++) {
 
 				portid = l2fwd_dst_ports[qconf->rx_port_list[i]];
-				buffer = tx_buffer[portid];
+				buffer = tx_buffer[portid];  
 
-				sent = rte_eth_tx_buffer_flush(portid, 0, buffer);
+				sent = rte_eth_tx_buffer_flush(portid, 0, buffer); // 將暂存在buffer的包发出去
 				if (sent)
 					port_statistics[portid].tx += sent;
 
@@ -249,7 +250,7 @@ l2fwd_main_loop(void)
 				if (unlikely(timer_tsc >= timer_period)) {
 
 					/* do this only on master core */
-					if (lcore_id == rte_get_master_lcore()) {
+					if (lcore_id == rte_get_master_lcore()) {  // 只在master core打印统计信息
 						print_stats();
 						/* reset the timer */
 						timer_tsc = 0;
@@ -263,6 +264,7 @@ l2fwd_main_loop(void)
 		/*
 		 * Read packet from RX queues
 		 */
+		// 收包
 		for (i = 0; i < qconf->n_rx_port; i++) {
 
 			portid = qconf->rx_port_list[i];
@@ -274,7 +276,7 @@ l2fwd_main_loop(void)
 			for (j = 0; j < nb_rx; j++) {
 				m = pkts_burst[j];
 				rte_prefetch0(rte_pktmbuf_mtod(m, void *));
-				l2fwd_simple_forward(m, portid);
+				l2fwd_simple_forward(m, portid); // 转发
 			}
 		}
 	}
@@ -393,7 +395,7 @@ l2fwd_parse_args(int argc, char **argv)
 		switch (opt) {
 		/* portmask */
 		case 'p':
-			l2fwd_enabled_port_mask = l2fwd_parse_portmask(optarg);
+			l2fwd_enabled_port_mask = l2fwd_parse_portmask(optarg);  // 启用端口掩码
 			if (l2fwd_enabled_port_mask == 0) {
 				printf("invalid portmask\n");
 				l2fwd_usage(prgname);
@@ -403,7 +405,7 @@ l2fwd_parse_args(int argc, char **argv)
 
 		/* nqueue */
 		case 'q':
-			l2fwd_rx_queue_per_lcore = l2fwd_parse_nqueue(optarg);
+			l2fwd_rx_queue_per_lcore = l2fwd_parse_nqueue(optarg);  // 每一个lcore负责的rx队列数量
 			if (l2fwd_rx_queue_per_lcore == 0) {
 				printf("invalid queue number\n");
 				l2fwd_usage(prgname);
@@ -548,12 +550,12 @@ main(int argc, char **argv)
 		rte_exit(EXIT_FAILURE, "No Ethernet ports - bye\n");
 
 	/* check port mask to possible port mask */
-	if (l2fwd_enabled_port_mask & ~((1 << nb_ports) - 1))
+	if (l2fwd_enabled_port_mask & ~((1 << nb_ports) - 1))  // 检查实际网卡数量和掩码的比特位数量是否匹配
 		rte_exit(EXIT_FAILURE, "Invalid portmask; possible (0x%x)\n",
 			(1 << nb_ports) - 1);
 
 	/* reset l2fwd_dst_ports */
-	for (portid = 0; portid < RTE_MAX_ETHPORTS; portid++)
+	for (portid = 0; portid < RTE_MAX_ETHPORTS; portid++) // 先将所有网口的目的网口设为0
 		l2fwd_dst_ports[portid] = 0;
 	last_port = 0;
 
@@ -565,7 +567,7 @@ main(int argc, char **argv)
 		if ((l2fwd_enabled_port_mask & (1 << portid)) == 0)
 			continue;
 
-		if (nb_ports_in_mask % 2) {
+		if (nb_ports_in_mask % 2) {   // 两两网口为一组，互相为目的网口
 			l2fwd_dst_ports[portid] = last_port;
 			l2fwd_dst_ports[last_port] = portid;
 		}
@@ -574,7 +576,7 @@ main(int argc, char **argv)
 
 		nb_ports_in_mask++;
 	}
-	if (nb_ports_in_mask % 2) {
+	if (nb_ports_in_mask % 2) {  // 如果端口总数为奇数，则最后一个端口的目的网口设置为它自己
 		printf("Notice: odd number of ports in portmask.\n");
 		l2fwd_dst_ports[last_port] = last_port;
 	}
@@ -589,6 +591,8 @@ main(int argc, char **argv)
 			continue;
 
 		/* get the lcore_id for this port */
+		// 为portid分配一个可用rx_lcore_id，即每个网卡分配一个逻辑核心。
+		//要满足lcoreid不为0，且lcore负责的网口数量没有达到l2fwd_rx_queue_per_lcore上限
 		while (rte_lcore_is_enabled(rx_lcore_id) == 0 ||
 		       lcore_queue_conf[rx_lcore_id].n_rx_port ==
 		       l2fwd_rx_queue_per_lcore) {
@@ -599,17 +603,17 @@ main(int argc, char **argv)
 
 		if (qconf != &lcore_queue_conf[rx_lcore_id]) {
 			/* Assigned a new logical core in the loop above. */
-			qconf = &lcore_queue_conf[rx_lcore_id];
-			nb_lcores++;
+			qconf = &lcore_queue_conf[rx_lcore_id]; // 赋值给一个临时变量qconf，用于后续操作
+			nb_lcores++;  //统计lcore数量
 		}
 
-		qconf->rx_port_list[qconf->n_rx_port] = portid;
+		qconf->rx_port_list[qconf->n_rx_port] = portid; //记录lcore负责的网卡id，并将n_rx_port加1
 		qconf->n_rx_port++;
 		printf("Lcore %u: RX port %u\n", rx_lcore_id, portid);
 	}
 
 	nb_mbufs = RTE_MAX(nb_ports * (nb_rxd + nb_txd + MAX_PKT_BURST +
-		nb_lcores * MEMPOOL_CACHE_SIZE), 8192U);
+		nb_lcores * MEMPOOL_CACHE_SIZE), 8192U);  // 计算mbuf数量，保证每个网卡至少有nb_rxd+nb_txd个mbuf
 
 	/* create the mbuf pool */
 	l2fwd_pktmbuf_pool = rte_pktmbuf_pool_create("mbuf_pool", nb_mbufs,
@@ -639,7 +643,7 @@ main(int argc, char **argv)
 		if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_MBUF_FAST_FREE)
 			local_port_conf.txmode.offloads |=
 				DEV_TX_OFFLOAD_MBUF_FAST_FREE;
-		ret = rte_eth_dev_configure(portid, 1, 1, &local_port_conf);
+		ret = rte_eth_dev_configure(portid, 1, 1, &local_port_conf);  // 配置每个网卡，设置RXTX队列数量为1。
 		if (ret < 0)
 			rte_exit(EXIT_FAILURE, "Cannot configure device: err=%d, port=%u\n",
 				  ret, portid);
@@ -651,7 +655,7 @@ main(int argc, char **argv)
 				 "Cannot adjust number of descriptors: err=%d, port=%u\n",
 				 ret, portid);
 
-		rte_eth_macaddr_get(portid,&l2fwd_ports_eth_addr[portid]);
+		rte_eth_macaddr_get(portid,&l2fwd_ports_eth_addr[portid]); // 获取每一个网卡mac地址
 
 		/* init one RX queue */
 		fflush(stdout);
@@ -679,14 +683,14 @@ main(int argc, char **argv)
 		/* Initialize TX buffers */
 		tx_buffer[portid] = rte_zmalloc_socket("tx_buffer",
 				RTE_ETH_TX_BUFFER_SIZE(MAX_PKT_BURST), 0,
-				rte_eth_dev_socket_id(portid));
+				rte_eth_dev_socket_id(portid));  // 为每个网卡分配一个大小为RTE_ETH_TX_BUFFER_SIZE(MAX_PKT_BURST)的内存块，用于存放待发送的数据包。
 		if (tx_buffer[portid] == NULL)
 			rte_exit(EXIT_FAILURE, "Cannot allocate buffer for tx on port %u\n",
 					portid);
 
-		rte_eth_tx_buffer_init(tx_buffer[portid], MAX_PKT_BURST);
+		rte_eth_tx_buffer_init(tx_buffer[portid], MAX_PKT_BURST);  // 初始化每个网卡的发送缓冲区，用于存放待发送的数据包。
 
-		ret = rte_eth_tx_buffer_set_err_callback(tx_buffer[portid],
+		ret = rte_eth_tx_buffer_set_err_callback(tx_buffer[portid], // 为每个网卡的发送缓冲区设置错误回调函数，当发送缓冲区出现错误时，会调用该回调函数。
 				rte_eth_tx_buffer_count_callback,
 				&port_statistics[portid].dropped);
 		if (ret < 0)
@@ -726,7 +730,7 @@ main(int argc, char **argv)
 
 	ret = 0;
 	/* launch per-lcore init on every lcore */
-	rte_eal_mp_remote_launch(l2fwd_launch_one_lcore, NULL, CALL_MASTER);
+	rte_eal_mp_remote_launch(l2fwd_launch_one_lcore, NULL, CALL_MASTER);  //在每个逻辑核心上（CALL_MASTER表示包括master）启动l2fwd_launch_one_lcore函数，以初始化并运行L2转发程序。
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
 		if (rte_eal_wait_lcore(lcore_id) < 0) {
 			ret = -1;
