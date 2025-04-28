@@ -592,7 +592,7 @@ main(int argc, char **argv)
 
 		/* get the lcore_id for this port */
 		// 为portid分配一个可用rx_lcore_id，即每个网卡分配一个逻辑核心。
-		//要满足lcoreid不为0，且lcore负责的网口数量没有达到l2fwd_rx_queue_per_lcore上限
+		//要满足lcoreid可用，且lcore负责的网口数量没有达到l2fwd_rx_queue_per_lcore上限
 		while (rte_lcore_is_enabled(rx_lcore_id) == 0 ||
 		       lcore_queue_conf[rx_lcore_id].n_rx_port ==
 		       l2fwd_rx_queue_per_lcore) {
