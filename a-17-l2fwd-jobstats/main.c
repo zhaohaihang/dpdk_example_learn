@@ -896,7 +896,7 @@ main(int argc, char **argv)
 
 		rte_eth_tx_buffer_init(tx_buffer[portid], MAX_PKT_BURST); // 初始化发送缓冲区
 
-		ret = rte_eth_tx_buffer_set_err_callback(tx_buffer[portid],
+		ret = rte_eth_tx_buffer_set_err_callback(tx_buffer[portid], // 设置发包错误的回调函数，统计错误包
 				rte_eth_tx_buffer_count_callback,
 				&port_statistics[portid].dropped);
 		if (ret < 0)
@@ -936,17 +936,17 @@ main(int argc, char **argv)
 
 	drain_tsc = (hz + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
 
-	RTE_LCORE_FOREACH(lcore_id) {
-		qconf = &lcore_queue_conf[lcore_id];
+	RTE_LCORE_FOREACH(lcore_id) { // 遍历每一个lcore,设置其对应的lcore_queue_conf
+		qconf = &lcore_queue_conf[lcore_id];  // 取出lcore 的配置
 
-		rte_spinlock_init(&qconf->lock);
+		rte_spinlock_init(&qconf->lock); // 初始化自旋锁
 
 		if (rte_jobstats_context_init(&qconf->jobs_context) != 0)
 			rte_panic("Jobs stats context for core %u init failed\n", lcore_id);
 
 		if (qconf->n_rx_port == 0) {
 			RTE_LOG(INFO, L2FWD,
-				"lcore %u: no ports so no jobs stats context initialization\n",
+				"lcore %u: no ports so no jobs stats context initialization\n",  // 如果lcore没有负责的端口，则跳过
 				lcore_id);
 			continue;
 		}
