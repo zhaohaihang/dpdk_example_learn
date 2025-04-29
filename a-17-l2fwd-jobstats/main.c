@@ -69,18 +69,18 @@ static unsigned int l2fwd_rx_queue_per_lcore = 1;
 #define MAX_TX_QUEUE_PER_PORT 16
 struct lcore_queue_conf {
 	unsigned n_rx_port;
-	unsigned rx_port_list[MAX_RX_QUEUE_PER_LCORE];
+	unsigned rx_port_list[MAX_RX_QUEUE_PER_LCORE]; // 记录lcore负责的网口id
 	uint64_t next_flush_time[RTE_MAX_ETHPORTS];
 
-	struct rte_timer rx_timers[MAX_RX_QUEUE_PER_LCORE];
+	struct rte_timer rx_timers[MAX_RX_QUEUE_PER_LCORE]; //rx_timers 和 flush_timer 用于确保在低数据包速率下强制 TX
 	struct rte_jobstats port_fwd_jobs[MAX_RX_QUEUE_PER_LCORE];
 
 	struct rte_timer flush_timer;
-	struct rte_jobstats flush_job;
+	struct rte_jobstats flush_job; //flush_job、idle_job 和 jobs_context 是用于管理 l2fwd 作业的 librte_jobstats 对象。
 	struct rte_jobstats idle_job;
 	struct rte_jobstats_context jobs_context;
 
-	rte_atomic16_t stats_read_pending;
+	rte_atomic16_t stats_read_pending;//stats_read_pending 和 lock 在作业统计读取阶段使用。
 	rte_spinlock_t lock;
 } __rte_cache_aligned;
 struct lcore_queue_conf lcore_queue_conf[RTE_MAX_LCORE];
@@ -352,7 +352,7 @@ l2fwd_simple_forward(struct rte_mbuf *m, unsigned portid)
 	rte_ether_addr_copy(&l2fwd_ports_eth_addr[dst_port], &eth->s_addr);
 
 	buffer = tx_buffer[dst_port];
-	sent = rte_eth_tx_buffer(dst_port, 0, buffer, m);
+	sent = rte_eth_tx_buffer(dst_port, 0, buffer, m); // 将数据包，先发到port对应的buffer。然后在flush里面突发模式发送
 	if (sent)
 		port_statistics[dst_port].tx += sent;
 }
@@ -373,7 +373,7 @@ l2fwd_job_update_cb(struct rte_jobstats *job, int64_t result)
 }
 
 static void
-l2fwd_fwd_job(__rte_unused struct rte_timer *timer, void *arg)
+l2fwd_fwd_job(__rte_unused struct rte_timer *timer, void *arg) //l2fwd_fwd_job() 函数的主要任务是从特定端口的 RX 队列中读取入站数据包并进行转发。
 {
 	struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
 	struct rte_mbuf *m;
@@ -392,7 +392,7 @@ l2fwd_fwd_job(__rte_unused struct rte_timer *timer, void *arg)
 	/* Call rx burst 2 times. This allow rte_jobstats logic to see if this
 	 * function must be called more frequently. */
 
-	total_nb_rx = rte_eth_rx_burst(portid, 0, pkts_burst,
+	total_nb_rx = rte_eth_rx_burst(portid, 0, pkts_burst,  //第一次取包
 			MAX_PKT_BURST);
 
 	for (j = 0; j < total_nb_rx; j++) {
@@ -401,11 +401,11 @@ l2fwd_fwd_job(__rte_unused struct rte_timer *timer, void *arg)
 		l2fwd_simple_forward(m, portid);
 	}
 
-	if (total_nb_rx == MAX_PKT_BURST) {
+	if (total_nb_rx == MAX_PKT_BURST) { // 如果第一次取满了包，则再次尝试取包，如果第一次都没取满，则就没必要取第二次了
 		const uint16_t nb_rx = rte_eth_rx_burst(portid, 0, pkts_burst,
 				MAX_PKT_BURST);
 
-		total_nb_rx += nb_rx;
+		total_nb_rx += nb_rx;  // 将两次取包的结果累加到一起
 		for (j = 0; j < nb_rx; j++) {
 			m = pkts_burst[j];
 			rte_prefetch0(rte_pktmbuf_mtod(m, void *));
@@ -415,6 +415,9 @@ l2fwd_fwd_job(__rte_unused struct rte_timer *timer, void *arg)
 
 	port_statistics[portid].rx += total_nb_rx;
 
+	//为了最大化性能，期望在每次 l2fwd_fwd_job() 调用中读取到准确的 MAX_PKT_BURST（目标值）。
+	//如果 total_nb_rx 小于目标值，job->period 将增加。如果大于目标值，周期将减少。
+	// 根据取到的包数量，适当的调整周期，以达到最佳性能。
 	/* Adjust period time in which we are running here. */
 	if (rte_jobstats_finish(job, total_nb_rx) != 0) {
 		rte_timer_reset(&qconf->rx_timers[port_idx], job->period, PERIODICAL,
@@ -490,9 +493,16 @@ l2fwd_main_loop(void)
 
 	rte_jobstats_init(&qconf->idle_job, "idle", 0, 0, 0, 0);
 
-	for (;;) {
+	for (;;) { //第一个无限循环是为了最小化统计读取的影响。锁仅在请求时被锁定/解锁。
 		rte_spinlock_lock(&qconf->lock);
 
+		// 第二个内部 while 循环负责整个作业管理。
+		// 当任何作业准备好时，使用 rte_timer_manage() 来调用作业处理程序。
+		// 在这个地方，根据需要调用 l2fwd_fwd_job() 和 l2fwd_flush_job()。
+		// 然后调用 rte_jobstats_context_finish() 来标记循环结束 - 
+		// 没有其他作业准备好执行。
+		// 此时，统计信息已准备好读取，如果设置了 stats_read_pending，
+		// 则循环中断，允许读取统计信息。
 		do {
 			rte_jobstats_context_start(&qconf->jobs_context);
 
@@ -504,6 +514,10 @@ l2fwd_main_loop(void)
 
 			uint64_t repeats = 0;
 
+			
+			// 第三个 do-while 循环是空闲任务（空闲状态计数器）。
+			// 它的唯一目的是监控是否有任何任务准备就绪或该 lcore 的状态任务读取待处理。
+			// 此部分代码的统计信息被视为可用于额外处理的余量。
 			do {
 				uint8_t i;
 				uint64_t now = rte_get_timer_cycles();
@@ -953,6 +967,7 @@ main(int argc, char **argv)
 		/* Add flush job.
 		 * Set fixed period by setting min = max = initial period. Set target to
 		 * zero as it is irrelevant for this job. */
+		// 刷新作业统计
 		rte_jobstats_init(&qconf->flush_job, "flush", drain_tsc, drain_tsc,
 				drain_tsc, 0);
 
@@ -965,7 +980,7 @@ main(int argc, char **argv)
 					lcore_id, rte_strerror(-ret));
 		}
 
-		for (i = 0; i < qconf->n_rx_port; i++) {
+		for (i = 0; i < qconf->n_rx_port; i++) {  // 对于lcore_id的每个rx端口，设置转发作业
 			struct rte_jobstats *job = &qconf->port_fwd_jobs[i];
 
 			portid = qconf->rx_port_list[i];
