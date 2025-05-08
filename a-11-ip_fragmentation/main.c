@@ -137,12 +137,12 @@ struct rx_queue {
 #define MAX_RX_QUEUE_PER_LCORE 16
 #define MAX_TX_QUEUE_PER_PORT 16
 struct lcore_queue_conf {
-	uint16_t n_rx_queue;
-	uint16_t tx_queue_id[RTE_MAX_ETHPORTS];
-	struct rx_queue rx_queue_list[MAX_RX_QUEUE_PER_LCORE];
+	uint16_t n_rx_queue; // lcore负责的rx_queue数量
+	uint16_t tx_queue_id[RTE_MAX_ETHPORTS]; // lcore负责的tx_queue列表
+	struct rx_queue rx_queue_list[MAX_RX_QUEUE_PER_LCORE]; // 每个lcore对应MAX_RX_QUEUE_PER_LCORE个rx_queue
 	struct mbuf_table tx_mbufs[RTE_MAX_ETHPORTS];
 } __rte_cache_aligned;
-struct lcore_queue_conf lcore_queue_conf[RTE_MAX_LCORE];
+struct lcore_queue_conf lcore_queue_conf[RTE_MAX_LCORE]; // 每个lcore对应一个结构体，里面有多个rx_queue和tx_mbufs
 
 static struct rte_eth_conf port_conf = {
 	.rxmode = {
@@ -236,9 +236,10 @@ send_burst(struct lcore_queue_conf *qconf, uint16_t n, uint16_t port)
 	return 0;
 }
 
+
 static inline void
 l3fwd_simple_forward(struct rte_mbuf *m, struct lcore_queue_conf *qconf,
-		uint8_t queueid, uint16_t port_in)
+		uint8_t queueid, uint16_t port_in) // queueid是lcore负责的rx_queue列表中的第几个, port_in是输入端口
 {
 	struct rx_queue *rxq;
 	uint32_t i, len, next_hop;
@@ -251,29 +252,29 @@ l3fwd_simple_forward(struct rte_mbuf *m, struct lcore_queue_conf *qconf,
 	rxq = &qconf->rx_queue_list[queueid];
 
 	/* by default, send everything back to the source port */
-	port_out = port_in;
+	port_out = port_in; // 默认是哪个端口的包，发回哪个端口
 
 	/* save ether type of the incoming packet */
 	eth = rte_pktmbuf_mtod(m, const struct rte_ether_hdr *);
-	ether_type = eth->ether_type;
+	ether_type = eth->ether_type; // 获取以太网类型
 
 	/* Remove the Ethernet header and trailer from the input packet */
-	rte_pktmbuf_adj(m, (uint16_t)sizeof(struct rte_ether_hdr));
+	rte_pktmbuf_adj(m, (uint16_t)sizeof(struct rte_ether_hdr)); // 去掉以太网头部
 
 	/* Build transmission burst */
 	len = qconf->tx_mbufs[port_out].len;
 
 	/* if this is an IPv4 packet */
-	if (RTE_ETH_IS_IPV4_HDR(m->packet_type)) {
+	if (RTE_ETH_IS_IPV4_HDR(m->packet_type)) { // ipv4报文
 		struct rte_ipv4_hdr *ip_hdr;
 		uint32_t ip_dst;
 		/* Read the lookup key (i.e. ip_dst) from the input packet */
-		ip_hdr = rte_pktmbuf_mtod(m, struct rte_ipv4_hdr *);
-		ip_dst = rte_be_to_cpu_32(ip_hdr->dst_addr);
+		ip_hdr = rte_pktmbuf_mtod(m, struct rte_ipv4_hdr *); // 获取ipv4头部，获取目的ip地址
+		ip_dst = rte_be_to_cpu_32(ip_hdr->dst_addr);//获取目的ip地址
 
 		/* Find destination port */
 		if (rte_lpm_lookup(rxq->lpm, ip_dst, &next_hop) == 0 &&
-				(enabled_port_mask & 1 << next_hop) != 0) {
+				(enabled_port_mask & 1 << next_hop) != 0) { // 根据 lcore对应的rx_queue中的lpm表，查找目的ip对应的端口号 
 			port_out = next_hop;
 
 			/* Build transmission burst for new port */
@@ -281,18 +282,18 @@ l3fwd_simple_forward(struct rte_mbuf *m, struct lcore_queue_conf *qconf,
 		}
 
 		/* if we don't need to do any fragmentation */
-		if (likely (IPV4_MTU_DEFAULT >= m->pkt_len)) {
-			qconf->tx_mbufs[port_out].m_table[len] = m;
+		if (likely (IPV4_MTU_DEFAULT >= m->pkt_len)) { // 判断是否需要分片，不需要就直接转发
+			qconf->tx_mbufs[port_out].m_table[len] = m; // 先存到lcore对应的rxqueue的txbuf中
 			len2 = 1;
 		} else {
 			len2 = rte_ipv4_fragment_packet(m,
 				&qconf->tx_mbufs[port_out].m_table[len],
 				(uint16_t)(MBUF_TABLE_SIZE - len),
 				IPV4_MTU_DEFAULT,
-				rxq->direct_pool, rxq->indirect_pool);
+				rxq->direct_pool, rxq->indirect_pool); // 从rxq的direct_pool和indirect_pool中取出mbuf，进行分片处理
 
 			/* Free input packet */
-			rte_pktmbuf_free(m);
+			rte_pktmbuf_free(m); // 释放原始报文
 
 			/* request HW to regenerate IPv4 cksum */
 			ol_flags |= (PKT_TX_IPV4 | PKT_TX_IP_CKSUM);
@@ -349,23 +350,23 @@ l3fwd_simple_forward(struct rte_mbuf *m, struct lcore_queue_conf *qconf,
 		m = qconf->tx_mbufs[port_out].m_table[i];
 		struct rte_ether_hdr *eth_hdr = (struct rte_ether_hdr *)
 			rte_pktmbuf_prepend(m,
-				(uint16_t)sizeof(struct rte_ether_hdr));
+				(uint16_t)sizeof(struct rte_ether_hdr)); // 重新分配头部空间
 		if (eth_hdr == NULL) {
 			rte_panic("No headroom in mbuf.\n");
 		}
 
-		m->ol_flags |= ol_flags;
-		m->l2_len = sizeof(struct rte_ether_hdr);
+		m->ol_flags |= ol_flags; // 设置ol_flags，表示需要重新计算校验和
+		m->l2_len = sizeof(struct rte_ether_hdr); // 设置l2长度
 
 		/* 02:00:00:00:00:xx */
 		d_addr_bytes = &eth_hdr->d_addr.addr_bytes[0];
 		*((uint64_t *)d_addr_bytes) = 0x000000000002 +
-			((uint64_t)port_out << 40);
+			((uint64_t)port_out << 40); // 设置目的mac地址
 
 		/* src addr */
 		rte_ether_addr_copy(&ports_eth_addr[port_out],
-				&eth_hdr->s_addr);
-		eth_hdr->ether_type = ether_type;
+				&eth_hdr->s_addr); // 设置源mac地址
+		eth_hdr->ether_type = ether_type; // 设置以太网类型
 	}
 
 	len += len2;
@@ -426,7 +427,7 @@ main_loop(__attribute__((unused)) void *dummy)
 			 * portid), but it is not called so often
 			 */
 			for (portid = 0; portid < RTE_MAX_ETHPORTS; portid++) {
-				if (qconf->tx_mbufs[portid].len == 0)
+				if (qconf->tx_mbufs[portid].len == 0) // 没有数据包发送，则跳过该端口
 					continue;
 				send_burst(&lcore_queue_conf[lcore_id],
 					   qconf->tx_mbufs[portid].len,
@@ -440,7 +441,7 @@ main_loop(__attribute__((unused)) void *dummy)
 		/*
 		 * Read packet from RX queues
 		 */
-		for (i = 0; i < qconf->n_rx_queue; i++) { 	// 遍历每一个端口的队列
+		for (i = 0; i < qconf->n_rx_queue; i++) { 	// 遍历当前lcore负责的所有端口（因为一个端口只有一个队列）
 
 			portid = qconf->rx_queue_list[i].portid;
 			nb_rx = rte_eth_rx_burst(portid, 0, pkts_burst,
@@ -640,7 +641,7 @@ check_all_ports_link_status(uint32_t port_mask)
 
 /* Check L3 packet type detection capablity of the NIC port */
 static int
-check_ptype(int portid)
+check_ptype(int portid) // 检查一个给定的以太网端口（通过其ID，即portid）是否支持IPv4和IPv6的数据包解析
 {
 	int i, ret;
 	int ptype_l3_ipv4 = 0, ptype_l3_ipv6 = 0;
@@ -696,7 +697,7 @@ static uint16_t
 cb_parse_ptype(uint16_t port __rte_unused, uint16_t queue __rte_unused,
 		   struct rte_mbuf *pkts[], uint16_t nb_pkts,
 		   uint16_t max_pkts __rte_unused,
-		   void *user_param __rte_unused)
+		   void *user_param __rte_unused) // 回调函数，用于检测数据包类型
 {
 	uint16_t i;
 
@@ -714,11 +715,11 @@ init_routing_table(void)
 	int socket, ret;
 	unsigned i;
 
-	for (socket = 0; socket < RTE_MAX_NUMA_NODES; socket++) {
-		if (socket_lpm[socket]) {
-			lpm = socket_lpm[socket];
-			/* populate the LPM table */
-			for (i = 0; i < RTE_DIM(l3fwd_ipv4_route_array); i++) {
+	for (socket = 0; socket < RTE_MAX_NUMA_NODES; socket++) { // 遍历所有socket
+		if (socket_lpm[socket]) { 
+			lpm = socket_lpm[socket]; 
+			/* populate the LPM table */  // 填充LPM表
+			for (i = 0; i < RTE_DIM(l3fwd_ipv4_route_array); i++) {   // l3fwd_ipv4_route_array数组的信息，加载到socket_lpm[socket]中
 				ret = rte_lpm_add(lpm,
 					l3fwd_ipv4_route_array[i].ip,
 					l3fwd_ipv4_route_array[i].depth,
@@ -741,8 +742,8 @@ init_routing_table(void)
 
 		if (socket_lpm6[socket]) {
 			lpm6 = socket_lpm6[socket];
-			/* populate the LPM6 table */
-			for (i = 0; i < RTE_DIM(l3fwd_ipv6_route_array); i++) {
+			/* populate the LPM6 table */ // 填充LPM6表
+			for (i = 0; i < RTE_DIM(l3fwd_ipv6_route_array); i++) {  // l3fwd_ipv6_route_array数组的信息，加载到socket_lpm6[socket]中
 				ret = rte_lpm6_add(lpm6,
 					l3fwd_ipv6_route_array[i].ip,
 					l3fwd_ipv6_route_array[i].depth,
@@ -808,7 +809,7 @@ init_mem(void)
 					socket);
 			snprintf(buf, sizeof(buf), "pool_indirect_%i", socket);
 
-			mp = rte_pktmbuf_pool_create(buf, NB_MBUF, 32, 0, 0,
+			mp = rte_pktmbuf_pool_create(buf, NB_MBUF, 32, 0, 0,  // data_room_size为0表示不预先分配内存
 				socket);
 			if (mp == NULL) {
 				RTE_LOG(ERR, IP_FRAG, "Cannot create indirect mempool\n");
@@ -817,7 +818,7 @@ init_mem(void)
 			socket_indirect_pool[socket] = mp;
 		}
 
-		if (socket_lpm[socket] == NULL) {  // 每一个socket 对应lpm
+		if (socket_lpm[socket] == NULL) {  // 每一个socket 对应一个lpm
 			RTE_LOG(INFO, IP_FRAG, "Creating LPM table on socket %i\n", socket);
 			snprintf(buf, sizeof(buf), "IP_FRAG_LPM_%i", socket);
 
@@ -833,7 +834,7 @@ init_mem(void)
 			socket_lpm[socket] = lpm;
 		}
 
-		if (socket_lpm6[socket] == NULL) { // 每一个socket 对应lpm6
+		if (socket_lpm6[socket] == NULL) { // 每一个socket 对应一个lpm6
 			RTE_LOG(INFO, IP_FRAG, "Creating LPM6 table on socket %i\n", socket);
 			snprintf(buf, sizeof(buf), "IP_FRAG_LPM_%i", socket);
 
@@ -901,8 +902,6 @@ main(int argc, char **argv)
 		}
 
 		qconf = &lcore_queue_conf[rx_lcore_id];
-
-		
 		/* get the lcore_id for this port */
 		while (rte_lcore_is_enabled(rx_lcore_id) == 0 ||
 		       qconf->n_rx_queue == (unsigned)rx_queue_per_lcore) {  // 为当前的端口 找到一个合适的逻辑核
@@ -911,17 +910,17 @@ main(int argc, char **argv)
 			if (rx_lcore_id >= RTE_MAX_LCORE)
 				rte_exit(EXIT_FAILURE, "Not enough cores\n");
 
-			qconf = &lcore_queue_conf[rx_lcore_id]; // 获取逻辑核对应的队列
+			qconf = &lcore_queue_conf[rx_lcore_id]; // 获取逻辑核对应的队列配置
 		}
 
 		socket = (int) rte_lcore_to_socket_id(rx_lcore_id); // 获取逻辑核对应的socket
 		if (socket == SOCKET_ID_ANY)
 			socket = 0;
 
-		rxq = &qconf->rx_queue_list[qconf->n_rx_queue]; // 为当前的端口，创建一个接收队列
+		rxq = &qconf->rx_queue_list[qconf->n_rx_queue]; // 为当前的lcore，配置接收队列信息
 		rxq->portid = portid; // 设置接收队列的端口id
 		rxq->direct_pool = socket_direct_pool[socket]; // 设置接收队列的直接内存池
-		rxq->indirect_pool = socket_indirect_pool[socket];
+		rxq->indirect_pool = socket_indirect_pool[socket]; // 设置接收队列的间接内存池
 		rxq->lpm = socket_lpm[socket];
 		rxq->lpm6 = socket_lpm6[socket];
 		qconf->n_rx_queue++;
@@ -952,7 +951,7 @@ main(int argc, char **argv)
 
 		/* set the mtu to the maximum received packet size */
 		ret = rte_eth_dev_set_mtu(portid,
-			local_port_conf.rxmode.max_rx_pkt_len - MTU_OVERHEAD);
+			local_port_conf.rxmode.max_rx_pkt_len - MTU_OVERHEAD);  // 设置MTU的大小
 		if (ret < 0) {
 			printf("\n");
 			rte_exit(EXIT_FAILURE, "Set MTU failed: "
@@ -960,7 +959,7 @@ main(int argc, char **argv)
 			ret, portid);
 		}
 
-		ret = rte_eth_dev_adjust_nb_rx_tx_desc(portid, &nb_rxd,
+		ret = rte_eth_dev_adjust_nb_rx_tx_desc(portid, &nb_rxd, // 检查 Rx 和 Tx 描述符的数量是否符合以太网设备信息中的描述符限制，否则将它们调整到边界值。
 					    &nb_txd);
 		if (ret < 0) {
 			printf("\n");
@@ -973,7 +972,7 @@ main(int argc, char **argv)
 		rxq_conf.offloads = local_port_conf.rxmode.offloads;
 		ret = rte_eth_rx_queue_setup(portid, 0, nb_rxd,
 					     socket, &rxq_conf,
-					     socket_direct_pool[socket]);
+					     socket_direct_pool[socket]); //为以太网设备分配并设置接收队列。为描述符分配内存块，并且从memepool分配描述符对应的内存
 		if (ret < 0) {
 			printf("\n");
 			rte_exit(EXIT_FAILURE, "rte_eth_rx_queue_setup: "
@@ -981,14 +980,14 @@ main(int argc, char **argv)
 				ret, portid);
 		}
 
-		rte_eth_macaddr_get(portid, &ports_eth_addr[portid]);
+		rte_eth_macaddr_get(portid, &ports_eth_addr[portid]); // 获取以太网设备的MAC地址
 		print_ethaddr(" Address:", &ports_eth_addr[portid]);
 		printf("\n");
 
 		/* init one TX queue per couple (lcore,port) */
 		rte_eth_dev_info_get(portid, &dev_info);
 		queueid = 0;
-		for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
+		for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {  // 在当前portid上，为每一个lcore配置一个发送队列
 			if (rte_lcore_is_enabled(lcore_id) == 0)
 				continue;
 
@@ -1009,7 +1008,7 @@ main(int argc, char **argv)
 					"err=%d, port=%d\n", ret, portid);
 			}
 
-			qconf = &lcore_queue_conf[lcore_id];
+			qconf = &lcore_queue_conf[lcore_id]; // 记录每一个lcore对应的发送队列id
 			qconf->tx_queue_id[portid] = queueid;
 			queueid++;
 		}
@@ -1039,13 +1038,13 @@ main(int argc, char **argv)
 		}
 	}
 
-	if (init_routing_table() < 0)
+	if (init_routing_table() < 0) // 初始化路由表
 		rte_exit(EXIT_FAILURE, "Cannot init routing table\n");
 
 	check_all_ports_link_status(enabled_port_mask);  // 阻塞等待网口切换到正常状态
 
 	/* launch per-lcore init on every lcore */
-	rte_eal_mp_remote_launch(main_loop, NULL, CALL_MASTER);  // 在除了主核之外的每一个核上启动main_loop函数
+	rte_eal_mp_remote_launch(main_loop, NULL, CALL_MASTER);  // CALL_MASTER=1，会在每一个核上启动main_loop函数
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
 		if (rte_eal_wait_lcore(lcore_id) < 0)
 			return -1;
