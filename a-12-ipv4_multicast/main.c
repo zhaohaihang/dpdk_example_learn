@@ -100,7 +100,7 @@ struct lcore_queue_conf {
 	uint64_t tx_tsc;
 	uint16_t n_rx_queue;
 	uint8_t rx_queue_list[MAX_RX_QUEUE_PER_LCORE];
-	uint16_t tx_queue_id[MAX_PORTS];
+	uint16_t tx_queue_id[MAX_PORTS]; // 每一个逻辑核在每一个端口上都有一个发送队列的ID
 	struct mbuf_table tx_mbufs[MAX_PORTS];
 } __rte_cache_aligned;
 static struct lcore_queue_conf lcore_queue_conf[RTE_MAX_LCORE];
@@ -128,7 +128,7 @@ static struct rte_fbk_hash_params mcast_hash_params = {
 	.socket_id = 0,
 	.hash_func = NULL,
 	.init_val = 0,
-};
+}; // 用于创建哈希表的参数
 
 struct rte_fbk_hash_table *mcast_hash = NULL;
 
@@ -161,7 +161,7 @@ static struct mcast_group_params mcast_group_table[] = {
 
 /* Send burst of packets on an output interface */
 static void
-send_burst(struct lcore_queue_conf *qconf, uint16_t port)
+send_burst(struct lcore_queue_conf *qconf, uint16_t port) 
 {
 	struct rte_mbuf **m_table;
 	uint16_t n, queueid;
@@ -241,18 +241,18 @@ mcast_out_pkt(struct rte_mbuf *pkt, int use_clone)
 	struct rte_mbuf *hdr;
 
 	/* Create new mbuf for the header. */
-	if (unlikely ((hdr = rte_pktmbuf_alloc(header_pool)) == NULL))
+	if (unlikely ((hdr = rte_pktmbuf_alloc(header_pool)) == NULL)) // 先分配一个hdr
 		return NULL;
 
 	/* If requested, then make a new clone packet. */
 	if (use_clone != 0 &&
-	    unlikely ((pkt = rte_pktmbuf_clone(pkt, clone_pool)) == NULL)) {
+	    unlikely ((pkt = rte_pktmbuf_clone(pkt, clone_pool)) == NULL)) {  // 如果需要clone，则先clone一个pkt, 如果没有clone，会直接用原来的pkt
 		rte_pktmbuf_free(hdr);
 		return NULL;
 	}
 
 	/* prepend new header */
-	hdr->next = pkt;
+	hdr->next = pkt;  
 
 	/* update header's fields */
 	hdr->pkt_len = (uint16_t)(hdr->data_len + pkt->pkt_len);
@@ -268,7 +268,7 @@ mcast_out_pkt(struct rte_mbuf *pkt, int use_clone)
  */
 static inline void
 mcast_send_pkt(struct rte_mbuf *pkt, struct rte_ether_addr *dest_addr,
-		struct lcore_queue_conf *qconf, uint16_t port)
+		struct lcore_queue_conf *qconf, uint16_t port)  //为pkt添加以太网头部，并将其放入给定端口的输出队列中
 {
 	struct rte_ether_hdr *ethdr;
 	uint16_t len;
@@ -308,15 +308,16 @@ mcast_forward(struct rte_mbuf *m, struct lcore_queue_conf *qconf)
 
 	/* Remove the Ethernet header from the input packet */
 	iphdr = (struct rte_ipv4_hdr *)
-		rte_pktmbuf_adj(m, (uint16_t)sizeof(struct rte_ether_hdr));
+		rte_pktmbuf_adj(m, (uint16_t)sizeof(struct rte_ether_hdr)); // 去掉以太网头部，指向IP头部
 	RTE_ASSERT(iphdr != NULL);
 
-	dest_addr = rte_be_to_cpu_32(iphdr->dst_addr);
+	dest_addr = rte_be_to_cpu_32(iphdr->dst_addr); // 获取包中的目的ip
 
 	/*
 	 * Check that it is a valid multicast address and
 	 * we have some active ports assigned to it.
 	 */
+	// 检查数据包以查看它是否具有多播目标地址，以及路由表是否有分配给目标地址的任何端口：
 	if (!RTE_IS_IPV4_MCAST(dest_addr) ||
 	    (hash = rte_fbk_hash_lookup(mcast_hash, dest_addr)) <= 0 ||
 	    (port_mask = hash & enabled_port_mask) == 0) {
@@ -325,26 +326,27 @@ mcast_forward(struct rte_mbuf *m, struct lcore_queue_conf *qconf)
 	}
 
 	/* Calculate number of destination ports. */
-	port_num = bitcnt(port_mask);
+	port_num = bitcnt(port_mask); // 计算端口数量
 
-	/* Should we use rte_pktmbuf_clone() or not. */  // 是否使用数据包克隆，当端口少，数据包的段少时，使用克隆会更快,use_clone 为1 表示克隆
+	/* Should we use rte_pktmbuf_clone() or not. */  // 判断是否使用数据包克隆，当需要多播的端口少且数据包的段少时，使用克隆会更快,use_clone 为1 表示克隆
 	use_clone = (port_num <= MCAST_CLONE_PORTS &&
 	    m->nb_segs <= MCAST_CLONE_SEGS);
 
 	/* Mark all packet's segments as referenced port_num times */ 
 	if (use_clone == 0)
-		rte_pktmbuf_refcnt_update(m, (uint16_t)port_num); // 如果不使用clone，则 更新数据包内存缓冲区（mbuf）的引用计数
+		rte_pktmbuf_refcnt_update(m, (uint16_t)port_num); // 如果不使用clone，则 更新数据包内存缓冲区（mbuf）的引用计数。将引用计数设置为端口数，以确保在转发到所有目标之前不会释放数据包。
 
 	/* construct destination ethernet address */
+	//由于以太网地址也是多播过程的一部分，因此每个传出数据包都携带相同的目标以太网地址。根据RFC 1112，目标以太网地址由多播组的低23位或与以太网地址01:00:5e：00:00:00:00构造：
 	dst_eth_addr.as_int = ETHER_ADDR_FOR_IPV4_MCAST(dest_addr);
 
 	for (port = 0; use_clone != port_mask; port_mask >>= 1, port++) { // 
 
 		/* Prepare output packet and send it out. */
 		if ((port_mask & 1) != 0) {
-			if (likely ((mc = mcast_out_pkt(m, use_clone)) != NULL))
+			if (likely ((mc = mcast_out_pkt(m, use_clone)) != NULL)) // 创建新的数据包，并将其发送到端口
 				mcast_send_pkt(mc, &dst_eth_addr.as_addr,qconf, port);
-			else if (use_clone == 0)
+			else if (use_clone == 0) // 如果没有clone，则引用计数器-1
 				rte_pktmbuf_free(m);
 		}
 	}
@@ -361,7 +363,7 @@ mcast_forward(struct rte_mbuf *m, struct lcore_queue_conf *qconf)
 
 /* Send burst of outgoing packet, if timeout expires. */
 static inline void
-send_timeout_burst(struct lcore_queue_conf *qconf)
+send_timeout_burst(struct lcore_queue_conf *qconf)  // 发送超时数据包,目的是在包数量少时，也能及时发送数据包
 {
 	uint64_t cur_tsc;
 	uint16_t portid;
@@ -389,10 +391,10 @@ main_loop(__rte_unused void *dummy)
 	struct lcore_queue_conf *qconf;
 
 	lcore_id = rte_lcore_id();
-	qconf = &lcore_queue_conf[lcore_id];
+	qconf = &lcore_queue_conf[lcore_id]; // 获取当前逻辑核心的配置信息
 
 
-	if (qconf->n_rx_queue == 0) {
+	if (qconf->n_rx_queue == 0) { // 如果当前lcore，没有配置接收队列，则退出循环
 		RTE_LOG(INFO, IPv4_MULTICAST, "lcore %u has nothing to do\n",
 		    lcore_id);
 		return 0;
@@ -404,7 +406,7 @@ main_loop(__rte_unused void *dummy)
 	for (i = 0; i < qconf->n_rx_queue; i++) {
 
 		portid = qconf->rx_queue_list[i];
-		RTE_LOG(INFO, IPv4_MULTICAST, " -- lcoreid=%u portid=%d\n",
+		RTE_LOG(INFO, IPv4_MULTICAST, " -- lcoreid=%u portid=%d\n",  // 打印当前逻辑核心和负责的端口信息
 		    lcore_id, portid);
 	}
 
@@ -413,11 +415,11 @@ main_loop(__rte_unused void *dummy)
 		/*
 		 * Read packet from RX queues
 		 */
-		for (i = 0; i < qconf->n_rx_queue; i++) {
+		for (i = 0; i < qconf->n_rx_queue; i++) { // 遍历当前lcore负责的所有端口的rx队列
 
 			portid = qconf->rx_queue_list[i];
 			nb_rx = rte_eth_rx_burst(portid, 0, pkts_burst,
-						 MAX_PKT_BURST);
+						 MAX_PKT_BURST); // 从端口接收数据包
 
 			/* Prefetch first packets */
 			for (j = 0; j < PREFETCH_OFFSET && j < nb_rx; j++) {
@@ -429,7 +431,7 @@ main_loop(__rte_unused void *dummy)
 			for (j = 0; j < (nb_rx - PREFETCH_OFFSET); j++) {
 				rte_prefetch0(rte_pktmbuf_mtod(pkts_burst[
 						j + PREFETCH_OFFSET], void *));
-				mcast_forward(pkts_burst[j], qconf);
+				mcast_forward(pkts_burst[j], qconf); // 转发数据包
 			}
 
 			/* Forward remaining prefetched packets */
@@ -554,7 +556,7 @@ init_mcast_hash(void)
 		return -1;
 	}
 
-	for (i = 0; i < N_MCAST_GROUPS; i ++){
+	for (i = 0; i < N_MCAST_GROUPS; i ++){  // 将mcast_group_table元素，添加进mcast_hash中。
 		if (rte_fbk_hash_add_key(mcast_hash,
 			mcast_group_table[i].ip,
 			mcast_group_table[i].port_mask) < 0) {
@@ -645,39 +647,39 @@ main(int argc, char **argv)
 		rte_exit(EXIT_FAILURE, "Invalid IPV4_MULTICAST parameters\n");
 
 	/* create the mbuf pools */
-	packet_pool = rte_pktmbuf_pool_create("packet_pool", NB_PKT_MBUF, 32,
+	packet_pool = rte_pktmbuf_pool_create("packet_pool", NB_PKT_MBUF, 32,   // 直接内存池，需要足够大的空间来存储数据包的有效负载,dataroom_size设置为PKT_MBUF_DATA_SIZE
 		0, PKT_MBUF_DATA_SIZE, rte_socket_id());
 
 	if (packet_pool == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot init packet mbuf pool\n");
 
-	header_pool = rte_pktmbuf_pool_create("header_pool", NB_HDR_MBUF, 32,  // 间接内存池，不需要太多空间
+	header_pool = rte_pktmbuf_pool_create("header_pool", NB_HDR_MBUF, 32,  // 间接内存池，不需要太多空间,dateroom_size为HDR_MBUF_DATA_SIZE
 		0, HDR_MBUF_DATA_SIZE, rte_socket_id());
 
 	if (header_pool == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot init header mbuf pool\n");
 
-	clone_pool = rte_pktmbuf_pool_create("clone_pool", NB_CLONE_MBUF, 32, // 间接内存池，不需要太多空间
+	clone_pool = rte_pktmbuf_pool_create("clone_pool", NB_CLONE_MBUF, 32, // 间接内存池，不需要太多空间,dataroom_size设置为0，因为不需要额外的空间来存储数据包的有效负载。
 		0, 0, rte_socket_id());
 
 	if (clone_pool == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot init clone mbuf pool\n");
 
-	nb_ports = rte_eth_dev_count_avail();
+	nb_ports = rte_eth_dev_count_avail(); // 获取可用网卡数量
 	if (nb_ports == 0)
 		rte_exit(EXIT_FAILURE, "No physical ports!\n");
 	if (nb_ports > MAX_PORTS)
 		nb_ports = MAX_PORTS;
 
-	nb_lcores = rte_lcore_count();
+	nb_lcores = rte_lcore_count(); // 获取逻辑核的数量
 
 	/* initialize all ports */
-	RTE_ETH_FOREACH_DEV(portid) {
+	RTE_ETH_FOREACH_DEV(portid) { // 遍历每一个网卡
 		struct rte_eth_rxconf rxq_conf;
 		struct rte_eth_conf local_port_conf = port_conf;
 
 		/* skip ports that are not enabled */
-		if ((enabled_port_mask & (1 << portid)) == 0) {
+		if ((enabled_port_mask & (1 << portid)) == 0) { // 跳过端口掩码未启用的端口
 			printf("Skipping disabled port %d\n", portid);
 			continue;
 		}
@@ -692,7 +694,7 @@ main(int argc, char **argv)
 
 		/* get the lcore_id for this port */  // 为当前网卡获取一个可用的核
 		while (rte_lcore_is_enabled(rx_lcore_id) == 0 ||
-		       qconf->n_rx_queue == (unsigned)rx_queue_per_lcore) {
+		       qconf->n_rx_queue == (unsigned)rx_queue_per_lcore) {  // 如果当前核已经被占用，或者队列已经满了，则换下一个逻辑核
 
 			rx_lcore_id ++;
 			qconf = &lcore_queue_conf[rx_lcore_id];
@@ -700,8 +702,8 @@ main(int argc, char **argv)
 			if (rx_lcore_id >= RTE_MAX_LCORE)
 				rte_exit(EXIT_FAILURE, "Not enough cores\n");
 		}
-		qconf->rx_queue_list[qconf->n_rx_queue] = portid; // 将网卡id加入到核的队列中,此处qconf->n_rx_queue < rx_queue_per_lcore
-		qconf->n_rx_queue++;
+		qconf->rx_queue_list[qconf->n_rx_queue] = portid; // 将网卡id加入到逻辑核的rx配置队列中,此处qconf->n_rx_queue < rx_queue_per_lcore
+		qconf->n_rx_queue++; // 增加队列数量
 
 		/* init port */
 		printf("Initializing port %d on lcore %u... ", portid,     // 逻辑核rx_lcore_id 负责处理portid网卡的数据
@@ -713,19 +715,19 @@ main(int argc, char **argv)
 			n_tx_queue = MAX_TX_QUEUE_PER_PORT;
 
 		ret = rte_eth_dev_configure(portid, 1, (uint16_t)n_tx_queue,
-					    &local_port_conf);
+					    &local_port_conf); // 配置网卡，1个RX队列和n_tx_queue个TX队列
 		if (ret < 0)
 			rte_exit(EXIT_FAILURE, "Cannot configure device: err=%d, port=%d\n", 
 				  ret, portid);
 
 		ret = rte_eth_dev_adjust_nb_rx_tx_desc(portid, &nb_rxd,
-						       &nb_txd);
+						       &nb_txd); // 调整网卡接收和发送队列的描述符数量
 		if (ret < 0)
 			rte_exit(EXIT_FAILURE,
 				 "Cannot adjust number of descriptors: err=%d, port=%d\n",
 				 ret, portid);
 
-		rte_eth_macaddr_get(portid, &ports_eth_addr[portid]);
+		rte_eth_macaddr_get(portid, &ports_eth_addr[portid]); // 获取网卡地址，并打印出来
 		print_ethaddr(" Address:", &ports_eth_addr[portid]);
 		printf(", ");
 
@@ -738,7 +740,7 @@ main(int argc, char **argv)
 		ret = rte_eth_rx_queue_setup(portid, queueid, nb_rxd,
 					     rte_eth_dev_socket_id(portid),
 					     &rxq_conf,
-					     packet_pool);
+					     packet_pool); // 设置网卡接收队列
 		if (ret < 0)
 			rte_exit(EXIT_FAILURE, "rte_eth_tx_queue_setup: err=%d, port=%d\n",
 				  ret, portid);
@@ -755,7 +757,7 @@ main(int argc, char **argv)
 			txconf = &dev_info.default_txconf;
 			txconf->offloads = local_port_conf.txmode.offloads;
 			ret = rte_eth_tx_queue_setup(portid, queueid, nb_txd,
-						     rte_lcore_to_socket_id(lcore_id), txconf);
+						     rte_lcore_to_socket_id(lcore_id), txconf); // 设置网卡发送队列
 			if (ret < 0)
 				rte_exit(EXIT_FAILURE, "rte_eth_tx_queue_setup: err=%d, "
 					  "port=%d\n", ret, portid);
@@ -775,15 +777,15 @@ main(int argc, char **argv)
 		printf("done:\n");
 	}
 
-	check_all_ports_link_status(enabled_port_mask);
+	check_all_ports_link_status(enabled_port_mask); // 检查所有端口的连接状态
 
 	/* initialize the multicast hash */
-	int retval = init_mcast_hash();
+	int retval = init_mcast_hash(); // 初始化多播哈希表
 	if (retval != 0)
 		rte_exit(EXIT_FAILURE, "Cannot build the multicast hash\n");
 
 	/* launch per-lcore init on every lcore */
-	rte_eal_mp_remote_launch(main_loop, NULL, CALL_MASTER);
+	rte_eal_mp_remote_launch(main_loop, NULL, CALL_MASTER); // 在每个逻辑核上启动main_loop函数
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
 		if (rte_eal_wait_lcore(lcore_id) < 0)
 			return -1;
