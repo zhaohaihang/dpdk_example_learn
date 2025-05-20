@@ -166,12 +166,12 @@ signal_handler(int signum)
 {
 	/* When we receive a USR1 signal, print stats */
 	if (signum == SIGUSR1) {
-		print_stats();
+		print_stats(); // 打印统计信息
 	}
 
 	/* When we receive a USR2 signal, reset stats */
 	if (signum == SIGUSR2) {
-		memset(&kni_stats, 0, sizeof(kni_stats));
+		memset(&kni_stats, 0, sizeof(kni_stats)); // 重置统计信息
 		printf("\n** Statistics have been reset **\n");
 		return;
 	}
@@ -179,7 +179,7 @@ signal_handler(int signum)
 	/* When we receive a RTMIN or SIGINT signal, stop kni processing */
 	if (signum == SIGRTMIN || signum == SIGINT){
 		printf("\nSIGRTMIN/SIGINT received. KNI processing stopping.\n");
-		rte_atomic32_inc(&kni_stop);
+		rte_atomic32_inc(&kni_stop);  // 原子的修改kni_stop的值，用于通知其他线程停止
 		return;
         }
 }
@@ -538,7 +538,7 @@ parse_args(int argc, char **argv)
 			if (!strncmp(longopts[longindex].name,
 				     CMDLINE_OPT_CONFIG,
 				     sizeof(CMDLINE_OPT_CONFIG))) {
-				ret = parse_config(optarg);
+				ret = parse_config(optarg);  // 解析config
 				if (ret) {
 					printf("Invalid config\n");
 					print_usage(prgname);
@@ -553,7 +553,7 @@ parse_args(int argc, char **argv)
 	}
 
 	/* Check that options were parsed ok */
-	if (validate_parameters(ports_mask) < 0) {
+	if (validate_parameters(ports_mask) < 0) { // 验证
 		print_usage(prgname);
 		rte_exit(EXIT_FAILURE, "Invalid parameters\n");
 	}
@@ -970,20 +970,20 @@ main(int argc, char** argv)
 	argv += ret;
 
 	/* Parse application arguments (after the EAL ones) */
-	ret = parse_args(argc, argv);
+	ret = parse_args(argc, argv); // 解析参数
 	if (ret < 0)
 		rte_exit(EXIT_FAILURE, "Could not parse input parameters\n");
 
 	/* Create the mbuf pool */
 	pktmbuf_pool = rte_pktmbuf_pool_create("mbuf_pool", NB_MBUF,
-		MEMPOOL_CACHE_SZ, 0, MBUF_DATA_SZ, rte_socket_id());
+		MEMPOOL_CACHE_SZ, 0, MBUF_DATA_SZ, rte_socket_id()); // 创建内存池
 	if (pktmbuf_pool == NULL) {
 		rte_exit(EXIT_FAILURE, "Could not initialise mbuf pool\n");
 		return -1;
 	}
 
 	/* Get number of ports found in scan */
-	nb_sys_ports = rte_eth_dev_count_avail();
+	nb_sys_ports = rte_eth_dev_count_avail(); // 获取端口数量
 	if (nb_sys_ports == 0)
 		rte_exit(EXIT_FAILURE, "No supported Ethernet device found\n");
 
@@ -994,22 +994,22 @@ main(int argc, char** argv)
 						"port ID %u\n", i);
 
 	/* Initialize KNI subsystem */
-	init_kni();
+	init_kni();  
 
 	/* Initialise each port */
-	RTE_ETH_FOREACH_DEV(port) {
+	RTE_ETH_FOREACH_DEV(port) { // 遍历所有port
 		/* Skip ports that are not enabled */
-		if (!(ports_mask & (1 << port)))
+		if (!(ports_mask & (1 << port))) 
 			continue;
 		init_port(port);
 
-		if (port >= RTE_MAX_ETHPORTS)
+		if (port >= RTE_MAX_ETHPORTS)  // port数量不能太多
 			rte_exit(EXIT_FAILURE, "Can not use more than "
 				"%d ports for kni\n", RTE_MAX_ETHPORTS);
 
-		kni_alloc(port);
+		kni_alloc(port);  // 创建kni设备
 	}
-	check_all_ports_link_status(ports_mask);
+	check_all_ports_link_status(ports_mask); // 检查所有端口的状态
 
 	pid = getpid();
 	RTE_LOG(INFO, APP, "========================\n");
@@ -1023,7 +1023,7 @@ main(int argc, char** argv)
 
 	ret = rte_ctrl_thread_create(&kni_link_tid,
 				     "KNI link status check", NULL,
-				     monitor_all_ports_link_status, NULL);
+				     monitor_all_ports_link_status, NULL); // 创建 用于port link 状态检查的线程
 	if (ret < 0)
 		rte_exit(EXIT_FAILURE,
 			"Could not create link status thread!\n");
@@ -1035,15 +1035,15 @@ main(int argc, char** argv)
 			return -1;
 	}
 	monitor_links = 0;
-	pthread_join(kni_link_tid, &retval);
+	pthread_join(kni_link_tid, &retval); // 等待kni_link_tid线程退出
 
 	/* Release resources */
-	RTE_ETH_FOREACH_DEV(port) {
+	RTE_ETH_FOREACH_DEV(port) {    // 释放kni资源
 		if (!(ports_mask & (1 << port)))
 			continue;
 		kni_free_kni(port);
 	}
-	for (i = 0; i < RTE_MAX_ETHPORTS; i++)
+	for (i = 0; i < RTE_MAX_ETHPORTS; i++) 
 		if (kni_port_params_array[i]) {
 			rte_free(kni_port_params_array[i]);
 			kni_port_params_array[i] = NULL;
