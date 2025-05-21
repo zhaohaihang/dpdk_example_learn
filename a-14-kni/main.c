@@ -136,7 +136,7 @@ static rte_atomic32_t kni_pause = RTE_ATOMIC32_INIT(0);
 
 /* Print out statistics on packets handled */
 static void
-print_stats(void)
+print_stats(void) // 打印统计信息
 {
 	uint16_t i;
 
@@ -202,7 +202,7 @@ kni_burst_free_mbufs(struct rte_mbuf **pkts, unsigned num)
  * Interface to burst rx and enqueue mbufs into rx_q
  */
 static void
-kni_ingress(struct kni_port_params *p)
+kni_ingress(struct kni_port_params *p) // 将网卡上收到的包，发送到kni中
 {
 	uint8_t i;
 	uint16_t port_id;
@@ -217,21 +217,21 @@ kni_ingress(struct kni_port_params *p)
 	port_id = p->port_id;
 	for (i = 0; i < nb_kni; i++) {
 		/* Burst rx from eth */
-		nb_rx = rte_eth_rx_burst(port_id, 0, pkts_burst, PKT_BURST_SZ);
+		nb_rx = rte_eth_rx_burst(port_id, 0, pkts_burst, PKT_BURST_SZ); // 从网卡接收数据包，最多接收PKT_BURST_SZ个包
 		if (unlikely(nb_rx > PKT_BURST_SZ)) {
 			RTE_LOG(ERR, APP, "Error receiving from eth\n");
 			return;
 		}
 		/* Burst tx to kni */
-		num = rte_kni_tx_burst(p->kni[i], pkts_burst, nb_rx);
+		num = rte_kni_tx_burst(p->kni[i], pkts_burst, nb_rx); // 将数据包发送到kni接口
 		if (num)
-			kni_stats[port_id].rx_packets += num;
+			kni_stats[port_id].rx_packets += num; // 更新统计信息
 
-		rte_kni_handle_request(p->kni[i]);
+		rte_kni_handle_request(p->kni[i]);// 处理kni的请求，比如改变MTU等
 		if (unlikely(num < nb_rx)) {
 			/* Free mbufs not tx to kni interface */
-			kni_burst_free_mbufs(&pkts_burst[num], nb_rx - num);
-			kni_stats[port_id].rx_dropped += nb_rx - num;
+			kni_burst_free_mbufs(&pkts_burst[num], nb_rx - num); // 释放没有被发送到kni接口的mbuf包
+			kni_stats[port_id].rx_dropped += nb_rx - num; // 更新统计信息
 		}
 	}
 }
@@ -240,7 +240,7 @@ kni_ingress(struct kni_port_params *p)
  * Interface to dequeue mbufs from tx_q and burst tx
  */
 static void
-kni_egress(struct kni_port_params *p)
+kni_egress(struct kni_port_params *p) // 将kni中收到的包，发送到网卡上
 {
 	uint8_t i;
 	uint16_t port_id;
@@ -287,7 +287,7 @@ main_loop(__rte_unused void *arg)
 	};
 	enum lcore_rxtx flag = LCORE_NONE;
 
-	RTE_ETH_FOREACH_DEV(i) {
+	RTE_ETH_FOREACH_DEV(i) {  //遍历所有port并检查每个设备的接收和发送逻辑核心ID是否与当前核心ID匹配
 		if (!kni_port_params_array[i])
 			continue;
 		if (kni_port_params_array[i]->lcore_rx == (uint8_t)lcore_id) {
@@ -311,7 +311,7 @@ main_loop(__rte_unused void *arg)
 				break;
 			if (f_pause)
 				continue;
-			kni_ingress(kni_port_params_array[i]);
+			kni_ingress(kni_port_params_array[i]);  // 接收数据包
 		}
 	} else if (flag == LCORE_TX) {
 		RTE_LOG(INFO, APP, "Lcore %u is writing to port %d\n",
@@ -324,7 +324,7 @@ main_loop(__rte_unused void *arg)
 				break;
 			if (f_pause)
 				continue;
-			kni_egress(kni_port_params_array[i]);
+			kni_egress(kni_port_params_array[i]);  // 发送数据包
 		}
 	} else
 		RTE_LOG(INFO, APP, "Lcore %u has nothing to do\n", lcore_id);
@@ -380,7 +380,7 @@ print_config(void)
 }
 
 static int
-parse_config(const char *arg)
+parse_config(const char *arg) // 解析config 参数
 {
 	const char *p, *p0 = arg;
 	char s[256], *end;
@@ -471,7 +471,7 @@ fail:
 }
 
 static int
-validate_parameters(uint32_t portmask)
+validate_parameters(uint32_t portmask) // 验证参数
 {
 	uint32_t i;
 
@@ -509,7 +509,7 @@ validate_parameters(uint32_t portmask)
 
 /* Parse the arguments given in the command line of the application */
 static int
-parse_args(int argc, char **argv)
+parse_args(int argc, char **argv) // 解析参数
 {
 	int opt, longindex, ret = 0;
 	const char *prgname = argv[0];
@@ -563,7 +563,7 @@ parse_args(int argc, char **argv)
 
 /* Initialize KNI subsystem */
 static void
-init_kni(void)
+init_kni(void)   // 初始化kni子系统
 {
 	unsigned int num_of_kni_ports = 0, i;
 	struct kni_port_params **params = kni_port_params_array;
@@ -572,17 +572,17 @@ init_kni(void)
 	for (i = 0; i < RTE_MAX_ETHPORTS; i++) {
 		if (kni_port_params_array[i]) {
 			num_of_kni_ports += (params[i]->nb_lcore_k ?
-				params[i]->nb_lcore_k : 1);
+				params[i]->nb_lcore_k : 1); // 累加所有的kni端口数
 		}
 	}
 
 	/* Invoke rte KNI init to preallocate the ports */
-	rte_kni_init(num_of_kni_ports);
+	rte_kni_init(num_of_kni_ports); // 初始化kni
 }
 
 /* Initialise a single port on an Ethernet device */
 static void
-init_port(uint16_t port)
+init_port(uint16_t port) // 配置端口
 {
 	int ret;
 	uint16_t nb_rxd = NB_RXD;
@@ -636,7 +636,7 @@ init_port(uint16_t port)
 
 /* Check the link status of all ports in up to 9s, and print them finally */
 static void
-check_all_ports_link_status(uint32_t port_mask)
+check_all_ports_link_status(uint32_t port_mask) // 检查所有端口的连接状态
 {
 #define CHECK_INTERVAL 100 /* 100ms */
 #define MAX_CHECK_TIME 90 /* 9s (90 * 100ms) in total */
@@ -727,7 +727,7 @@ monitor_all_ports_link_status(void *arg)
 			if ((ports_mask & (1 << portid)) == 0)
 				continue;
 			memset(&link, 0, sizeof(link));
-			rte_eth_link_get_nowait(portid, &link);
+			rte_eth_link_get_nowait(portid, &link);  // 根据port的状态，更新与之相关的kni的状态
 			for (i = 0; i < p[portid]->nb_kni; i++) {
 				prev = rte_kni_update_link(p[portid]->kni[i],
 						link.link_status);
@@ -873,13 +873,13 @@ kni_alloc(uint16_t port_id)
 	if (port_id >= RTE_MAX_ETHPORTS || !params[port_id])
 		return -1;
 
-	params[port_id]->nb_kni = params[port_id]->nb_lcore_k ?
-				params[port_id]->nb_lcore_k : 1;
+	params[port_id]->nb_kni = params[port_id]->nb_lcore_k ? // 确定当前的port的kni 数量
+				params[port_id]->nb_lcore_k : 1;  
 
 	for (i = 0; i < params[port_id]->nb_kni; i++) {
 		/* Clear conf at first */
-		memset(&conf, 0, sizeof(conf));
-		if (params[port_id]->nb_lcore_k) {
+		memset(&conf, 0, sizeof(conf)); // 重置配置结构体
+		if (params[port_id]->nb_lcore_k) { // 如果是多核环境，为每个KNI设备设置唯一的名称和绑定到特定的核心ID；否则，所有KNI设备使用相同的名称。v
 			snprintf(conf.name, RTE_KNI_NAMESIZE,
 					"vEth%u_%u", port_id, i);
 			conf.core_id = params[port_id]->lcore_k[i];
@@ -894,7 +894,7 @@ kni_alloc(uint16_t port_id)
 		 * is the master, for multiple kernel thread
 		 * environment.
 		 */
-		if (i == 0) {
+		if (i == 0) { //对于第一个KNI设备，需要额外配置一些操作，如获取端口的MAC地址、MTU（最大传输单元）等，并设置回调函数
 			struct rte_kni_ops ops;
 			struct rte_eth_dev_info dev_info;
 
@@ -909,18 +909,19 @@ kni_alloc(uint16_t port_id)
 
 			memset(&ops, 0, sizeof(ops));
 			ops.port_id = port_id;
-			ops.change_mtu = kni_change_mtu;
+			// 设置回调函数，一共可以设置4个
+			ops.change_mtu = kni_change_mtu;  
 			ops.config_network_if = kni_config_network_interface;
 			ops.config_mac_address = kni_config_mac_address;
 
-			kni = rte_kni_alloc(pktmbuf_pool, &conf, &ops);
+			kni = rte_kni_alloc(pktmbuf_pool, &conf, &ops); //使用rte_kni_alloc函数分配KNI设备，传入内存池、配置结构和操作结构（对于非首个KNI设备，操作结构为NULL）。
 		} else
 			kni = rte_kni_alloc(pktmbuf_pool, &conf, NULL);
 
 		if (!kni)
 			rte_exit(EXIT_FAILURE, "Fail to create kni for "
 						"port: %d\n", port_id);
-		params[port_id]->kni[i] = kni;
+		params[port_id]->kni[i] = kni; //将分配的KNI设备指针保存到端口参数配置中。
 	}
 
 	return 0;
@@ -936,7 +937,7 @@ kni_free_kni(uint16_t port_id)
 		return -1;
 
 	for (i = 0; i < p[port_id]->nb_kni; i++) {
-		if (rte_kni_release(p[port_id]->kni[i]))
+		if (rte_kni_release(p[port_id]->kni[i])) //释放KNI设备资源，如果失败则打印错误信息。成功释放后，将指针设置为NULL以避免悬挂引用。
 			printf("Fail to release kni\n");
 		p[port_id]->kni[i] = NULL;
 	}
@@ -1001,7 +1002,7 @@ main(int argc, char** argv)
 		/* Skip ports that are not enabled */
 		if (!(ports_mask & (1 << port))) 
 			continue;
-		init_port(port);
+		init_port(port); // 配置端口的rxtx
 
 		if (port >= RTE_MAX_ETHPORTS)  // port数量不能太多
 			rte_exit(EXIT_FAILURE, "Can not use more than "
