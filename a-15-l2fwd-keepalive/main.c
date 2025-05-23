@@ -226,7 +226,7 @@ l2fwd_main_loop(void)
 
 	while (!terminate_signal_received) {
 		/* Keepalive heartbeat */
-		rte_keepalive_mark_alive(rte_global_keepalive_info);
+		rte_keepalive_mark_alive(rte_global_keepalive_info); //每个核心的保活检查。标记core存活。
 
 		cur_tsc = rte_rdtsc();
 
@@ -234,7 +234,7 @@ l2fwd_main_loop(void)
 		 * Die randomly within 7 secs for demo purposes if
 		 * keepalive enabled
 		 */
-		if (check_period > 0 && cur_tsc - tsc_initial > tsc_lifetime)
+		if (check_period > 0 && cur_tsc - tsc_initial > tsc_lifetime) // 随机退出，模拟lcore异常
 			break;
 
 		/*
@@ -497,7 +497,7 @@ check_all_ports_link_status(uint32_t port_mask)
 }
 
 static void
-dead_core(__rte_unused void *ptr_data, const int id_core)
+dead_core(__rte_unused void *ptr_data, const int id_core) // core 异常时的回调函数
 {
 	if (terminate_signal_received)
 		return;
@@ -512,10 +512,10 @@ dead_core(__rte_unused void *ptr_data, const int id_core)
 
 static void
 relay_core_state(void *ptr_data, const int id_core,
-	const enum rte_keepalive_state core_state, uint64_t last_alive)
+	const enum rte_keepalive_state core_state, uint64_t last_alive)  // 核心状态回调函数
 {
 	rte_keepalive_relayed_state((struct rte_keepalive_shm *)ptr_data,
-		id_core, core_state, last_alive);
+		id_core, core_state, last_alive); // 返回核心的状态
 }
 
 int
@@ -540,7 +540,7 @@ main(int argc, char **argv)
 
 
 	/* init EAL */
-	ret = rte_eal_init(argc, argv);
+	ret = rte_eal_init(argc, argv); // eal 初始化
 	if (ret < 0)
 		rte_exit(EXIT_FAILURE, "Invalid EAL arguments\n");
 	argc -= ret;
@@ -549,7 +549,7 @@ main(int argc, char **argv)
 	l2fwd_enabled_port_mask = 0;
 
 	/* parse application arguments (after the EAL ones) */
-	ret = l2fwd_parse_args(argc, argv);
+	ret = l2fwd_parse_args(argc, argv); //  解析参数
 	if (ret < 0)
 		rte_exit(EXIT_FAILURE, "Invalid L2FWD arguments\n");
 
@@ -559,19 +559,19 @@ main(int argc, char **argv)
 	if (l2fwd_pktmbuf_pool == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot init mbuf pool\n");
 
-	nb_ports = rte_eth_dev_count_avail();
+	nb_ports = rte_eth_dev_count_avail(); // 获取并验证可用端口数量
 	if (nb_ports == 0)
 		rte_exit(EXIT_FAILURE, "No Ethernet ports - bye\n");
 
 	/* reset l2fwd_dst_ports */
-	for (portid = 0; portid < RTE_MAX_ETHPORTS; portid++)
+	for (portid = 0; portid < RTE_MAX_ETHPORTS; portid++) // 重置每一个端口的目标端口
 		l2fwd_dst_ports[portid] = 0;
 	last_port = 0;
 
 	/*
 	 * Each logical core is assigned a dedicated TX queue on each port.
 	 */
-	RTE_ETH_FOREACH_DEV(portid) {
+	RTE_ETH_FOREACH_DEV(portid) { // 设置port端口两两一组
 		/* skip ports that are not enabled */
 		if ((l2fwd_enabled_port_mask & (1 << portid)) == 0)
 			continue;
@@ -593,7 +593,7 @@ main(int argc, char **argv)
 	qconf = NULL;
 
 	/* Initialize the port/queue configuration of each logical core */
-	RTE_ETH_FOREACH_DEV(portid) {
+	RTE_ETH_FOREACH_DEV(portid) {  // 为端口分配一个合适的lcore，并记录
 		/* skip ports that are not enabled */
 		if ((l2fwd_enabled_port_mask & (1 << portid)) == 0)
 			continue;
@@ -618,7 +618,7 @@ main(int argc, char **argv)
 	}
 
 	/* Initialise each port */
-	RTE_ETH_FOREACH_DEV(portid) {
+	RTE_ETH_FOREACH_DEV(portid) { // 设置端口
 		struct rte_eth_dev_info dev_info;
 		struct rte_eth_rxconf rxq_conf;
 		struct rte_eth_txconf txq_conf;
@@ -638,20 +638,20 @@ main(int argc, char **argv)
 		if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_MBUF_FAST_FREE)
 			local_port_conf.txmode.offloads |=
 				DEV_TX_OFFLOAD_MBUF_FAST_FREE;
-		ret = rte_eth_dev_configure(portid, 1, 1, &local_port_conf);
+		ret = rte_eth_dev_configure(portid, 1, 1, &local_port_conf); // 配置端口
 		if (ret < 0)
 			rte_exit(EXIT_FAILURE,
 				"Cannot configure device: err=%d, port=%u\n",
 				ret, portid);
 
-		ret = rte_eth_dev_adjust_nb_rx_tx_desc(portid, &nb_rxd,
+		ret = rte_eth_dev_adjust_nb_rx_tx_desc(portid, &nb_rxd, // 调整端口接收和发送队列的大小
 						       &nb_txd);
 		if (ret < 0)
 			rte_exit(EXIT_FAILURE,
 				"Cannot adjust number of descriptors: err=%d, port=%u\n",
 				ret, portid);
 
-		rte_eth_macaddr_get(portid, &l2fwd_ports_eth_addr[portid]);
+		rte_eth_macaddr_get(portid, &l2fwd_ports_eth_addr[portid]); // 获取端口的MAC地址
 
 		/* init one RX queue */
 		fflush(stdout);
@@ -660,7 +660,7 @@ main(int argc, char **argv)
 		ret = rte_eth_rx_queue_setup(portid, 0, nb_rxd,
 					     rte_eth_dev_socket_id(portid),
 					     &rxq_conf,
-					     l2fwd_pktmbuf_pool);
+					     l2fwd_pktmbuf_pool); // 设置接收队列
 		if (ret < 0)
 			rte_exit(EXIT_FAILURE,
 				"rte_eth_rx_queue_setup:err=%d, port=%u\n",
@@ -672,7 +672,7 @@ main(int argc, char **argv)
 		txq_conf.offloads = local_port_conf.txmode.offloads;
 		ret = rte_eth_tx_queue_setup(portid, 0, nb_txd,
 				rte_eth_dev_socket_id(portid),
-				&txq_conf);
+				&txq_conf); // 设置发送队列
 		if (ret < 0)
 			rte_exit(EXIT_FAILURE,
 				"rte_eth_tx_queue_setup:err=%d, port=%u\n",
@@ -681,16 +681,16 @@ main(int argc, char **argv)
 		/* Initialize TX buffers */
 		tx_buffer[portid] = rte_zmalloc_socket("tx_buffer",
 				RTE_ETH_TX_BUFFER_SIZE(MAX_PKT_BURST), 0,
-				rte_eth_dev_socket_id(portid));
+				rte_eth_dev_socket_id(portid)); // 分配发送缓冲区
 		if (tx_buffer[portid] == NULL)
 			rte_exit(EXIT_FAILURE, "Cannot allocate buffer for tx on port %u\n",
 						portid);
 
-		rte_eth_tx_buffer_init(tx_buffer[portid], MAX_PKT_BURST);
+		rte_eth_tx_buffer_init(tx_buffer[portid], MAX_PKT_BURST); // 初始化发送缓冲区
 
 		ret = rte_eth_tx_buffer_set_err_callback(tx_buffer[portid],
-				rte_eth_tx_buffer_count_callback,
-				&port_statistics[portid].dropped);
+				rte_eth_tx_buffer_count_callback, 
+				&port_statistics[portid].dropped); //为无法发送的缓冲数据包配置一个回调函数。
 		if (ret < 0)
 			rte_exit(EXIT_FAILURE,
 			"Cannot set error callback for tx buffer on port %u\n",
@@ -728,41 +728,45 @@ main(int argc, char **argv)
 
 	struct rte_timer hb_timer, stats_timer;
 
-	rte_timer_subsystem_init();
-	rte_timer_init(&stats_timer);
+	rte_timer_subsystem_init(); // 初始化定时器子系统
+
 
 	ka_shm = NULL;
-	if (check_period > 0) {
-		ka_shm = rte_keepalive_shm_create();
+	if (check_period > 0) { // 如果设置了心跳检测周期，则初始化心跳检测对象
+		ka_shm = rte_keepalive_shm_create(); // 创建心跳检测共享内存对象
 		if (ka_shm == NULL)
 			rte_exit(EXIT_FAILURE,
 				"rte_keepalive_shm_create() failed");
 		rte_global_keepalive_info =
-			rte_keepalive_create(&dead_core, ka_shm);
+			rte_keepalive_create(&dead_core, ka_shm); // 创建心跳检测对象,dead_core是在检测到核心崩溃时调用的函数
 		if (rte_global_keepalive_info == NULL)
 			rte_exit(EXIT_FAILURE, "init_keep_alive() failed");
 		rte_keepalive_register_relay_callback(rte_global_keepalive_info,
-			relay_core_state, ka_shm);
+			relay_core_state, ka_shm); //注册一个“实时核心”回调函数。 当一个核心被确定为存活时会调用此回调
+
 		rte_timer_init(&hb_timer);
 		if (rte_timer_reset(&hb_timer,
 				(check_period * rte_get_timer_hz()) / 1000,
 				PERIODICAL,
 				rte_lcore_id(),
 				(void(*)(struct rte_timer*, void*))
-				&rte_keepalive_dispatch_pings,
+				&rte_keepalive_dispatch_pings,  // 定时调用ping心跳检测函数
 				rte_global_keepalive_info
 				) != 0 )
 			rte_exit(EXIT_FAILURE, "Keepalive setup failure.\n");
 	}
-	if (timer_period > 0) {
+
+	if (timer_period > 0) { // 如果设置了统计信息周期，则初始化定时器对象
+		rte_timer_init(&stats_timer);
 		if (rte_timer_reset(&stats_timer,
 				(timer_period * rte_get_timer_hz()) / 1000,
 				PERIODICAL,
 				rte_lcore_id(),
-				&print_stats, NULL
+				&print_stats, NULL    // 定时调用打印统计信息的函数
 				) != 0 )
 			rte_exit(EXIT_FAILURE, "Stats setup failure.\n");
 	}
+
 	/* launch per-lcore init on every slave lcore */
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
 		struct lcore_queue_conf *qconf = &lcore_queue_conf[lcore_id];
@@ -774,18 +778,18 @@ main(int argc, char **argv)
 				);
 		else {
 			rte_eal_remote_launch(
-				l2fwd_launch_one_lcore,
+				l2fwd_launch_one_lcore, // 启动每个逻辑核心的函数
 				NULL,
 				lcore_id
 				);
-			rte_keepalive_register_core(rte_global_keepalive_info,
+			rte_keepalive_register_core(rte_global_keepalive_info, // 将核心注册到心跳检测对象中
 				lcore_id);
 		}
 	}
 	while (!terminate_signal_received) {
-		rte_timer_manage();
-		rte_delay_ms(5);
-		}
+		rte_timer_manage();  // 定时器管理函数， 用于处理定时器到期事件。 它应该在主循环中定期调用。
+		rte_delay_ms(5); // 延时
+	}
 
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
 		if (rte_eal_wait_lcore(lcore_id) < 0)
